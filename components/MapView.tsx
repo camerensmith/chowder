@@ -18,6 +18,8 @@ export default function MapView({ places, onPlacePress, initialCenter, initialZo
     if (Platform.OS !== 'web' || !mapRef.current) return;
 
     const initMap = async () => {
+      if (!mapRef.current) return; // Type guard for async context
+      
       const L = await import('leaflet');
       
       // Import Leaflet CSS
