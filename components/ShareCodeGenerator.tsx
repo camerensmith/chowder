@@ -42,7 +42,7 @@ export default function ShareCodeGenerator({ listId, onClose }: ShareCodeGenerat
       const allPlaces = await getAllPlaces();
       const listPlaces = items
         .map(item => allPlaces.find(p => p.id === item.placeId))
-        .filter(Boolean);
+        .filter((place): place is NonNullable<typeof place> => place !== undefined);
 
       const payload: SharePayload = {
         type: 'list',

@@ -3,6 +3,7 @@
   "compilerOptions": {
     "strict": true,
     "esModuleInterop": true,
-    "skipLibCheck": true
+    "skipLibCheck": true,
+    "module": "esnext"
   }
 }
