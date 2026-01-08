@@ -1,0 +1,87 @@
+# Chowder 🍜
+
+A personal food and restaurant tracking app with a map-centric UI. Track your favorite restaurants, dishes, and visits—all stored locally on your device.
+
+## Features
+
+- **Local-Only Data**: All data stored locally using SQLite (native) or localStorage (web)
+- **Lists**: Organize restaurants and dishes into custom lists
+- **Map View**: See all your places on an interactive map (Leaflet on web)
+- **Ratings**: Rate places and dishes with 1-5 star ratings
+- **Share Codes**: Share lists via client-side generated codes (no backend required)
+- **Offline-First**: Works fully offline after initial setup
+- **Place Search**: Search for restaurants using Nominatim (OpenStreetMap)
+- **Visit Tracking**: Record visits to places with notes and photos
+- **Dish Tracking**: Track individual dishes eaten at each place
+
+## Getting Started
+
+### Prerequisites
+
+- Node.js 18+
+- npm or yarn
+- Expo CLI (installed globally or via npx)
+
+### Installation
+
+1. Install dependencies:
+```bash
+npm install
+```
+
+2. Start the development server:
+```bash
+npm start
+```
+
+3. Open the app:
+   - Press `w` to open in web browser
+   - Press `a` to open in Android emulator
+   - Press `i` to open in iOS simulator
+   - Scan QR code with Expo Go app on your device
+
+## Project Structure
+
+```
+chowder/
+├── App.tsx                 # Root component and navigation
+├── screens/                # Screen components
+│   ├── CreateAccountScreen.tsx
+│   ├── ListsScreen.tsx
+│   ├── MapScreen.tsx
+│   ├── ListDetailScreen.tsx
+│   ├── PlaceDetailScreen.tsx
+│   ├── SettingsScreen.tsx
+│   └── ShareViewerScreen.tsx
+├── components/             # Reusable components
+│   ├── MapView.tsx
+│   ├── PlaceSearchModal.tsx
+│   └── ShareCodeGenerator.tsx
+├── lib/                    # Utilities and services
+│   ├── db.ts              # Database operations
+│   ├── theme.ts           # Design system
+│   ├── maps.ts            # Map/search utilities
+│   └── sharing.ts         # Share code generation
+└── types/                  # TypeScript types
+    └── index.ts
+```
+
+## Core Principles
+
+- **Local Ownership**: All data belongs to the device owner
+- **Author, Not Account**: Profile exists only to name the author of shared recommendations
+- **Sharing Is Copy-Only**: Sharing produces a snapshot, importing creates a new list
+- **Offline-First**: App works fully offline after initial setup
+
+## Tech Stack
+
+- React Native
+- Expo
+- SQLite (expo-sqlite)
+- React Navigation
+- Leaflet (web map)
+- TypeScript
+
+## License
+
+Private project
