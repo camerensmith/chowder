@@ -27,6 +27,9 @@ jobs:
       - name: Build web
         run: npx expo export --platform web
       
+      - name: Fix paths for GitHub Pages
+        run: node fix-paths.js
+      
       - name: Deploy to GitHub Pages
         uses: peaceiris/actions-gh-pages@v3
         with:

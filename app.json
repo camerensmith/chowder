@@ -37,13 +37,14 @@
       "name": "Chowder",
       "shortName": "Chowder",
       "lang": "en",
-      "scope": "/",
+      "scope": "/chowder/",
       "themeColor": "#9C321B",
       "backgroundColor": "#F8F3F5",
       "display": "standalone",
       "orientation": "portrait",
-      "startUrl": "/",
-      "description": "Track your favorite local food and restaurants"
+      "startUrl": "/chowder/",
+      "description": "Track your favorite local food and restaurants",
+      "baseUrl": "/chowder"
     },
     "scheme": "chowder",
     "plugins": [
