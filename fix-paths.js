@@ -55,6 +55,8 @@ fs.writeFileSync(nojekyllPath, '', 'utf8');
 
 // Create 404.html that redirects to index.html for SPA routing
 // This allows direct navigation to deep links to work on GitHub Pages
+// When GitHub Pages encounters a non-existent path, it serves 404.html
+// By making it identical to index.html, the React app loads and handles client-side routing
 fs.writeFileSync(notFoundPath, html, 'utf8');
 
 console.log('✅ Fixed paths in index.html for GitHub Pages deployment');
