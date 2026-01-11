@@ -14,7 +14,9 @@ export interface Place {
   latitude: number;
   longitude: number;
   categoryId?: string;
-  overallRating?: number; // Calculated from visits
+  overallRating?: number; // Calculated from visits (when ratingMode is 'overall')
+  overallRatingManual?: number; // Manually set overall rating
+  ratingMode?: 'aggregate' | 'overall'; // 'aggregate' = average of dish ratings, 'overall' = manual rating
   notes?: string;
   createdAt: number;
   updatedAt: number;
@@ -66,6 +68,14 @@ export interface Category {
   name: string;
   type: 'place' | 'dish';
   parentId?: string;
+  order?: number; // For custom ordering
+  createdAt: number;
+}
+
+export interface Tag {
+  id: string;
+  name: string;
+  color?: string; // Optional color for tag chips
   createdAt: number;
 }
 
@@ -101,6 +111,7 @@ export type RootStackParamList = {
   ListDetail: { listId: string };
   PlaceDetail: { placeId: string };
   ShareViewer: { code?: string };
+  CategoryManagement: undefined;
 };
 
 export type MainTabParamList = {

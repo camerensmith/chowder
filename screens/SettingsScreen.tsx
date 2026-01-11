@@ -5,6 +5,7 @@ import {
   ScrollView,
   TouchableOpacity,
   StyleSheet,
+  Image,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -46,12 +47,11 @@ export default function SettingsScreen() {
           <MaterialCommunityIcons name="home" size={24} color={theme.colors.primary} />
         </TouchableOpacity>
         <View style={styles.logoContainer}>
-          <MaterialCommunityIcons name="bowl" size={24} color={theme.colors.primary} />
-          <MaterialCommunityIcons name="silverware-fork-knife" size={16} color={theme.colors.secondary} style={styles.spoon} />
+          <Image source={require('../assets/centericon.png')} style={styles.logoImage} />
         </View>
         <TouchableOpacity>
           <View style={styles.addButton}>
-            <MaterialCommunityIcons name="plus" size={20} color={theme.colors.background} />
+            <MaterialCommunityIcons name="plus" size={20} color={theme.colors.onSecondary} />
           </View>
         </TouchableOpacity>
       </View>
@@ -80,7 +80,22 @@ export default function SettingsScreen() {
             </View>
           </TouchableOpacity>
 
-          <TouchableOpacity style={styles.settingRow} activeOpacity={0.7}>
+          <TouchableOpacity
+            style={styles.settingRow}
+            onPress={() => {
+              // Navigate to CategoryManagement screen in RootStack
+              // Traverse up to find the root navigator (RootStack)
+              let nav: any = navigation;
+              while (nav && nav.getParent && nav.getParent()) {
+                nav = nav.getParent();
+              }
+              // Now nav should be the RootStack navigator
+              if (nav && nav.navigate) {
+                nav.navigate('CategoryManagement');
+              }
+            }}
+            activeOpacity={0.7}
+          >
             <Text style={styles.settingLabel}>Manage Categories</Text>
             <MaterialCommunityIcons name="chevron-right" size={20} color={theme.colors.textSecondary} />
           </TouchableOpacity>
@@ -142,12 +157,13 @@ const styles = StyleSheet.create({
     borderBottomColor: theme.colors.border,
   },
   logoContainer: {
-    position: 'relative',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  spoon: {
-    position: 'absolute',
-    bottom: -4,
-    right: -4,
+  logoImage: {
+    width: 157,
+    height: 48,
+    resizeMode: 'contain',
   },
   addButton: {
     width: 32,

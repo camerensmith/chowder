@@ -5,30 +5,84 @@ import {
   TextInput,
   TouchableOpacity,
   StyleSheet,
+  Image,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import * as Location from 'expo-location';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { RootStackParamList } from '../types';
+import { RootStackParamList, Place } from '../types';
 import { theme } from '../lib/theme';
-import { getAllPlaces, createPlace } from '../lib/db';
+import { getAllPlaces, createPlace, getCategory, getVisitsForPlace } from '../lib/db';
 import { searchPlaces, extractCoordinates, formatAddress, NominatimResult } from '../lib/maps';
 import MapView from '../components/MapView';
 import PlaceSearchModal from '../components/PlaceSearchModal';
+import PlaceSaveModal from '../components/PlaceSaveModal';
+import PlaceInfoCard from '../components/PlaceInfoCard';
 
 type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
 
 export default function MapScreen() {
   const navigation = useNavigation<NavigationProp>();
+  const insets = useSafeAreaInsets();
   const [places, setPlaces] = useState<any[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [isSearching, setIsSearching] = useState(false);
   const [showSearchModal, setShowSearchModal] = useState(false);
+  const [showSaveModal, setShowSaveModal] = useState(false);
+  const [clickedLocation, setClickedLocation] = useState<{ latitude: number; longitude: number } | null>(null);
+  const [userLocation, setUserLocation] = useState<{ latitude: number; longitude: number } | null>(null);
+  const [selectedPlace, setSelectedPlace] = useState<Place | null>(null);
+  const [selectedPlaceCategory, setSelectedPlaceCategory] = useState<string | undefined>(undefined);
+  const [selectedPlaceImage, setSelectedPlaceImage] = useState<string | undefined>(undefined);
+  
+  // Calculate recenter button position
+  const tabBarHeight = 80;
+  const cardHeight = 96;
+  const cardBottomOffset = tabBarHeight + 2 + insets.bottom; // Card is pinned to tab bar with 2px gap
+  const recenterButtonBottomWithCard = cardHeight + cardBottomOffset + theme.spacing.md; // Extra spacing above card
 
   useEffect(() => {
     loadPlaces();
+    // Try to get location silently in background (don't show errors on initial load)
+    getCurrentLocation(false);
   }, []);
+
+  const getCurrentLocation = async (showError = false) => {
+    try {
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== 'granted') {
+        if (showError) {
+          console.log('Location permission denied');
+        }
+        return;
+      }
+
+      // Use lower accuracy for better success rate
+      const location = await Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.Low, // Lower accuracy = faster, more reliable
+      });
+      
+      setUserLocation({
+        latitude: location.coords.latitude,
+        longitude: location.coords.longitude,
+      });
+    } catch (error: any) {
+      // Silently handle location errors - they're common on web browsers
+      // Error codes:
+      // 1 = PERMISSION_DENIED
+      // 2 = POSITION_UNAVAILABLE (common on web - no GPS, location services disabled, etc.)
+      // 3 = TIMEOUT
+      // All are non-fatal - app works fine without location
+      
+      // Only show a single helpful message if user explicitly requested location
+      if (showError && error?.code === 2) {
+        // On web browsers, location often fails - this is normal
+        console.log('Location unavailable. This is common on web browsers. The app works fine without location.');
+      }
+    }
+  };
 
   const loadPlaces = async () => {
     try {
@@ -57,6 +111,65 @@ export default function MapScreen() {
     }
   };
 
+  const handleMapClick = (lat: number, lng: number) => {
+    // Clear selected place when clicking on map
+    setSelectedPlace(null);
+    setClickedLocation({ latitude: lat, longitude: lng });
+    setShowSaveModal(true);
+  };
+
+  const handleSavePlace = async (name: string, address?: string) => {
+    if (!clickedLocation) return;
+    
+    try {
+      await createPlace(
+        name,
+        clickedLocation.latitude,
+        clickedLocation.longitude,
+        address
+      );
+      await loadPlaces();
+      setShowSaveModal(false);
+      setClickedLocation(null);
+    } catch (error) {
+      console.error('Failed to save place:', error);
+    }
+  };
+
+  const handlePlaceSelect = async (place: Place) => {
+    setSelectedPlace(place);
+    
+    // Load category name if categoryId exists
+    if (place.categoryId) {
+      try {
+        const category = await getCategory(place.categoryId);
+        setSelectedPlaceCategory(category?.name);
+      } catch (error) {
+        console.error('Failed to load category:', error);
+        setSelectedPlaceCategory(undefined);
+      }
+    } else {
+      setSelectedPlaceCategory(undefined);
+    }
+
+    // Load most recent visit photo if available
+    try {
+      const visits = await getVisitsForPlace(place.id);
+      const visitWithPhoto = visits.find(v => v.photoUri);
+      setSelectedPlaceImage(visitWithPhoto?.photoUri);
+    } catch (error) {
+      console.error('Failed to load visit photo:', error);
+      setSelectedPlaceImage(undefined);
+    }
+  };
+
+  const handleInfoCardPress = () => {
+    if (selectedPlace) {
+      navigation.navigate('PlaceDetail', { placeId: selectedPlace.id });
+      setSelectedPlace(null);
+    }
+  };
+
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
       {/* Header */}
@@ -65,12 +178,11 @@ export default function MapScreen() {
           <MaterialCommunityIcons name="home" size={24} color={theme.colors.primary} />
         </TouchableOpacity>
         <View style={styles.logoContainer}>
-          <MaterialCommunityIcons name="bowl" size={24} color={theme.colors.primary} />
-          <MaterialCommunityIcons name="silverware-fork-knife" size={16} color={theme.colors.secondary} style={styles.spoon} />
+          <Image source={require('../assets/centericon.png')} style={styles.logoImage} />
         </View>
         <TouchableOpacity onPress={() => setShowSearchModal(true)}>
           <View style={styles.addButton}>
-            <MaterialCommunityIcons name="plus" size={20} color={theme.colors.background} />
+            <MaterialCommunityIcons name="plus" size={20} color={theme.colors.onSecondary} />
           </View>
         </TouchableOpacity>
       </View>
@@ -96,7 +208,36 @@ export default function MapScreen() {
         <MapView
           places={places}
           onPlacePress={(place) => navigation.navigate('PlaceDetail', { placeId: place.id })}
+          onPlaceSelect={handlePlaceSelect}
+          onMapClick={handleMapClick}
+          selectedPlaceId={selectedPlace?.id}
+          center={userLocation ? { lat: userLocation.latitude, lng: userLocation.longitude } : undefined}
         />
+        {/* Place Info Card */}
+        {selectedPlace && (
+          <PlaceInfoCard
+            place={selectedPlace}
+            categoryName={selectedPlaceCategory}
+            imageUri={selectedPlaceImage}
+            onPress={handleInfoCardPress}
+          />
+        )}
+
+        {/* Recenter Button - moves up when place is selected */}
+        <TouchableOpacity
+          style={[
+            styles.recenterButton,
+            selectedPlace && { bottom: recenterButtonBottomWithCard },
+          ]}
+          onPress={() => getCurrentLocation(true)}
+          activeOpacity={0.7}
+        >
+          <MaterialCommunityIcons 
+            name="crosshairs-gps" 
+            size={24} 
+            color={userLocation ? theme.colors.primary : theme.colors.textSecondary} 
+          />
+        </TouchableOpacity>
       </View>
 
       {/* Place Search Modal */}
@@ -107,7 +248,22 @@ export default function MapScreen() {
           setSearchQuery('');
         }}
         onSelect={handleSearchSelect}
+        initialLocation={userLocation || undefined}
       />
+
+      {/* Place Save Modal (for map clicks) */}
+      {clickedLocation && (
+        <PlaceSaveModal
+          visible={showSaveModal}
+          latitude={clickedLocation.latitude}
+          longitude={clickedLocation.longitude}
+          onClose={() => {
+            setShowSaveModal(false);
+            setClickedLocation(null);
+          }}
+          onSave={handleSavePlace}
+        />
+      )}
     </SafeAreaView>
   );
 }
@@ -127,12 +283,13 @@ const styles = StyleSheet.create({
     borderBottomColor: theme.colors.border,
   },
   logoContainer: {
-    position: 'relative',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  spoon: {
-    position: 'absolute',
-    bottom: -4,
-    right: -4,
+  logoImage: {
+    width: 157,
+    height: 48,
+    resizeMode: 'contain',
   },
   addButton: {
     width: 32,
@@ -160,5 +317,21 @@ const styles = StyleSheet.create({
   },
   mapContainer: {
     flex: 1,
+    position: 'relative',
+  },
+  recenterButton: {
+    position: 'absolute',
+    bottom: theme.spacing.lg,
+    right: theme.spacing.lg,
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: theme.colors.background,
+    justifyContent: 'center',
+    alignItems: 'center',
+    ...theme.shadow,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    zIndex: 1, // Ensure button is above the map
   },
 });

@@ -7,7 +7,8 @@ export const theme = {
   colors: {
     primary: '#DC143C', // Red
     secondary: '#FFD700', // Yellow
-    background: '#FFFFFF',
+    onSecondary: '#9C321B', // Icon color for yellow buttons
+    background: '#F8F3F5',
     surface: '#F9F9F9',
     text: '#1A1A1A',
     textSecondary: '#666666',

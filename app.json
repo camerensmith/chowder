@@ -16,27 +16,50 @@
     ],
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.chowder.app"
+      "bundleIdentifier": "com.chowder.app",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
     },
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#ffffff"
       },
-      "package": "com.chowder.app"
+      "package": "com.chowder.app",
+      "permissions": [
+        "android.permission.RECORD_AUDIO"
+      ]
     },
     "web": {
-      "favicon": "./assets/favicon.png"
+      "favicon": "./assets/favicon.png",
+      "bundler": "metro",
+      "name": "Chowder",
+      "shortName": "Chowder",
+      "lang": "en",
+      "scope": "/",
+      "themeColor": "#9C321B",
+      "backgroundColor": "#F8F3F5",
+      "display": "standalone",
+      "orientation": "portrait",
+      "startUrl": "/",
+      "description": "Track your favorite local food and restaurants"
     },
     "scheme": "chowder",
     "plugins": [
       "expo-sqlite",
+      "expo-maps",
       [
         "expo-image-picker",
         {
           "photosPermission": "The app accesses your photos to let you set a profile picture."
         }
       ]
-    ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "3e73e6e3-1406-4770-a741-8e77acfc912e"
+      }
+    }
   }
 }

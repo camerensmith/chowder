@@ -57,8 +57,7 @@ export default function CreateAccountScreen() {
       <View style={styles.content}>
         {/* Logo */}
         <View style={styles.logoContainer}>
-          <MaterialCommunityIcons name="bowl" size={64} color={theme.colors.primary} />
-          <MaterialCommunityIcons name="silverware-fork-knife" size={32} color={theme.colors.secondary} style={styles.spoon} />
+          <Image source={require('../assets/centericon.png')} style={styles.logoImage} />
         </View>
 
         <Text style={styles.title}>Welcome to Chowder</Text>
@@ -119,11 +118,13 @@ const styles = StyleSheet.create({
   logoContainer: {
     position: 'relative',
     marginBottom: theme.spacing.xl,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
-  spoon: {
-    position: 'absolute',
-    bottom: -8,
-    right: -8,
+  logoImage: {
+    width: 64,
+    height: 64,
+    resizeMode: 'contain',
   },
   title: {
     ...theme.typography.h1,

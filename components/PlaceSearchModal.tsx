@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import {
   View,
   Text,
@@ -8,22 +8,64 @@ import {
   StyleSheet,
   Modal,
   ActivityIndicator,
+  Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import * as Location from 'expo-location';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { theme } from '../lib/theme';
-import { searchPlaces, NominatimResult, formatAddress } from '../lib/maps';
+import { searchPlaces, NominatimResult, formatAddress, SearchOptions } from '../lib/maps';
 
 interface PlaceSearchModalProps {
   visible: boolean;
   onClose: () => void;
   onSelect: (result: NominatimResult) => void;
+  initialLocation?: { latitude: number; longitude: number };
 }
 
-export default function PlaceSearchModal({ visible, onClose, onSelect }: PlaceSearchModalProps) {
+export default function PlaceSearchModal({ visible, onClose, onSelect, initialLocation }: PlaceSearchModalProps) {
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<NominatimResult[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [userLocation, setUserLocation] = useState<{ latitude: number; longitude: number } | null>(null);
+
+  // Get user's current location when modal opens
+  useEffect(() => {
+    if (visible && !initialLocation) {
+      // Silently try to get location - don't show errors as it's optional
+      getCurrentLocation();
+    } else if (initialLocation) {
+      setUserLocation(initialLocation);
+    }
+  }, [visible, initialLocation]);
+
+  const getCurrentLocation = async () => {
+    try {
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== 'granted') {
+        // Permission denied - silently fail, search works without location
+        return;
+      }
+
+      const location = await Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.Low, // Lower accuracy = faster, more reliable
+        timeout: 15000, // 15 second timeout
+        maximumAge: 300000, // Accept cached location up to 5 minutes old
+      });
+      
+      setUserLocation({
+        latitude: location.coords.latitude,
+        longitude: location.coords.longitude,
+      });
+    } catch (error: any) {
+      // Silently handle all location errors - search works fine without location
+      // Error codes:
+      // 1 = PERMISSION_DENIED
+      // 2 = POSITION_UNAVAILABLE (GPS disabled, no signal, etc.)
+      // 3 = TIMEOUT
+      // All are non-fatal - search will work without location bias
+    }
+  };
 
   const handleSearch = useCallback(async (text: string) => {
     setQuery(text);
@@ -34,7 +76,15 @@ export default function PlaceSearchModal({ visible, onClose, onSelect }: PlaceSe
 
     setIsLoading(true);
     try {
-      const searchResults = await searchPlaces(text);
+      const searchOptions: SearchOptions | undefined = userLocation || initialLocation
+        ? {
+            latitude: (userLocation || initialLocation)!.latitude,
+            longitude: (userLocation || initialLocation)!.longitude,
+            radius: 25, // 25km radius for local search
+          }
+        : undefined;
+
+      const searchResults = await searchPlaces(text, searchOptions);
       setResults(searchResults);
     } catch (error) {
       console.error('Search error:', error);
@@ -42,7 +92,7 @@ export default function PlaceSearchModal({ visible, onClose, onSelect }: PlaceSe
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, [userLocation, initialLocation]);
 
   const handleSelect = (result: NominatimResult) => {
     onSelect(result);
