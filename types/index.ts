@@ -4,6 +4,10 @@ export interface Author {
   id: string;
   displayName: string;
   avatarUri?: string;
+  email?: string;
+  apiId?: string;
+  synced: boolean;
+  userId?: string;
   createdAt: number;
 }
 
@@ -20,6 +24,10 @@ export interface Place {
   notes?: string;
   coverImageUri?: string; // Cover image for the place
   tagIds?: string[]; // Array of tag IDs (not stored in DB, loaded separately)
+  apiId?: string;
+  synced: boolean;
+  lastSyncedAt?: number;
+  userId?: string;
   createdAt: number;
   updatedAt: number;
 }
@@ -31,6 +39,10 @@ export interface List {
   category?: string; // e.g., "Pho", "Pizza"
   city?: string; // e.g., "NYC", "Bay Area"
   overallRating?: number; // Calculated from places
+  apiId?: string;
+  synced: boolean;
+  lastSyncedAt?: number;
+  userId?: string;
   createdAt: number;
   updatedAt: number;
 }
@@ -48,6 +60,9 @@ export interface Visit {
   placeId: string;
   notes?: string;
   photoUri?: string;
+  apiId?: string;
+  synced: boolean;
+  lastSyncedAt?: number;
   createdAt: number;
   updatedAt: number;
 }
@@ -60,6 +75,9 @@ export interface Dish {
   rating: number; // 1-5
   notes?: string;
   photoUri?: string;
+  apiId?: string;
+  synced: boolean;
+  lastSyncedAt?: number;
   createdAt: number;
   updatedAt: number;
 }
@@ -70,6 +88,9 @@ export interface Category {
   type: 'place' | 'dish';
   parentId?: string;
   order?: number; // For custom ordering
+  apiId?: string;
+  synced: boolean;
+  userId?: string;
   createdAt: number;
 }
 
@@ -77,6 +98,9 @@ export interface Tag {
   id: string;
   name: string;
   color?: string; // Optional color for tag chips
+  apiId?: string;
+  synced: boolean;
+  userId?: string;
   createdAt: number;
 }
 
@@ -109,6 +133,7 @@ export interface SharePlace {
 export type RootStackParamList = {
   Main: undefined;
   CreateAccount: undefined;
+  Login: undefined;
   ListDetail: { listId: string };
   PlaceDetail: { placeId: string };
   ShareViewer: { code?: string };
