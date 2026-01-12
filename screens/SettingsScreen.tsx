@@ -43,17 +43,13 @@ export default function SettingsScreen() {
     <SafeAreaView style={styles.container} edges={['top']}>
       {/* Header */}
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => navigation.navigate('Main')}>
-          <MaterialCommunityIcons name="home" size={24} color={theme.colors.primary} />
+        <TouchableOpacity onPress={loadAuthor}>
+          <MaterialCommunityIcons name="refresh" size={28} color={theme.colors.primary} />
         </TouchableOpacity>
         <View style={styles.logoContainer}>
           <Image source={require('../assets/centericon.png')} style={styles.logoImage} />
         </View>
-        <TouchableOpacity>
-          <View style={styles.addButton}>
-            <MaterialCommunityIcons name="plus" size={20} color={theme.colors.onSecondary} />
-          </View>
-        </TouchableOpacity>
+        <View style={styles.placeholder} />
       </View>
 
       <ScrollView style={styles.content}>
@@ -82,18 +78,7 @@ export default function SettingsScreen() {
 
           <TouchableOpacity
             style={styles.settingRow}
-            onPress={() => {
-              // Navigate to CategoryManagement screen in RootStack
-              // Traverse up to find the root navigator (RootStack)
-              let nav: any = navigation;
-              while (nav && nav.getParent && nav.getParent()) {
-                nav = nav.getParent();
-              }
-              // Now nav should be the RootStack navigator
-              if (nav && nav.navigate) {
-                nav.navigate('CategoryManagement');
-              }
-            }}
+            onPress={() => navigation.navigate('CategoryManagement')}
             activeOpacity={0.7}
           >
             <Text style={styles.settingLabel}>Manage Categories</Text>
@@ -165,13 +150,9 @@ const styles = StyleSheet.create({
     height: 48,
     resizeMode: 'contain',
   },
-  addButton: {
+  placeholder: {
     width: 32,
     height: 32,
-    borderRadius: 16,
-    backgroundColor: theme.colors.secondary,
-    justifyContent: 'center',
-    alignItems: 'center',
   },
   content: {
     flex: 1,

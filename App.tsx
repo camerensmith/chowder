@@ -17,6 +17,7 @@ import SettingsScreen from './screens/SettingsScreen';
 import ListDetailScreen from './screens/ListDetailScreen';
 import PlaceDetailScreen from './screens/PlaceDetailScreen';
 import ShareViewerScreen from './screens/ShareViewerScreen';
+import CategoryManagementScreen from './screens/CategoryManagementScreen';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 const Tab = createBottomTabNavigator<MainTabParamList>();
@@ -84,6 +85,7 @@ function RootNavigator({ needsAccount }: { needsAccount: boolean }) {
       <Stack.Screen name="ListDetail" component={ListDetailScreen} />
       <Stack.Screen name="PlaceDetail" component={PlaceDetailScreen} />
       <Stack.Screen name="ShareViewer" component={ShareViewerScreen} />
+      <Stack.Screen name="CategoryManagement" component={CategoryManagementScreen} />
     </Stack.Navigator>
   );
 }

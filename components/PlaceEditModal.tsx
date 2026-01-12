@@ -16,12 +16,13 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Place, Category } from '../types';
 import { theme } from '../lib/theme';
 import { getCategoriesByType } from '../lib/db';
+import DraggableStarRating from './DraggableStarRating';
 
 interface PlaceEditModalProps {
   visible: boolean;
   place: Place | null;
   onClose: () => void;
-  onSave: (updates: { name: string; address: string; categoryId?: string; rating?: number; imageUri?: string; overallRatingManual?: number; ratingMode?: 'aggregate' | 'overall' }) => void;
+  onSave: (updates: { name: string; address: string; categoryId?: string; rating?: number; imageUri?: string; coverImageUri?: string; overallRatingManual?: number; ratingMode?: 'aggregate' | 'overall' }) => void;
 }
 
 export default function PlaceEditModal({ visible, place, onClose, onSave }: PlaceEditModalProps) {
@@ -41,7 +42,7 @@ export default function PlaceEditModal({ visible, place, onClose, onSave }: Plac
       setAddress(place.address || '');
       setCategoryId(place.categoryId);
       setRating(place.overallRating);
-      setImageUri(undefined); // Reset image on open
+      setImageUri(place.coverImageUri); // Load cover image if exists
       setRatingMode(place.ratingMode || 'overall');
       setOverallRatingManual(place.overallRatingManual);
       loadCategories();
@@ -136,6 +137,7 @@ export default function PlaceEditModal({ visible, place, onClose, onSave }: Plac
       categoryId,
       rating,
       imageUri,
+      coverImageUri: imageUri, // Save as cover image
       ratingMode,
       overallRatingManual: ratingMode === 'overall' && rating ? rating : undefined,
     });
@@ -266,22 +268,15 @@ export default function PlaceEditModal({ visible, place, onClose, onSave }: Plac
               <View style={styles.field}>
                 <Text style={styles.label}>Overall Rating</Text>
                 <View style={styles.ratingContainer}>
-                  {[1, 2, 3, 4, 5].map(star => (
-                    <TouchableOpacity
-                      key={star}
-                      onPress={() => {
-                        setRating(star);
-                        setOverallRatingManual(star);
-                      }}
-                      style={styles.starButton}
-                    >
-                      <MaterialCommunityIcons
-                        name={rating && star <= rating ? 'star' : 'star-outline'}
-                        size={32}
-                        color={rating && star <= rating ? theme.colors.star : theme.colors.starEmpty}
-                      />
-                    </TouchableOpacity>
-                  ))}
+                  <DraggableStarRating
+                    rating={overallRatingManual || rating || 0}
+                    onRatingChange={(newRating) => {
+                      setRating(newRating);
+                      setOverallRatingManual(newRating);
+                    }}
+                    size={32}
+                    disabled={false}
+                  />
                 </View>
                 {rating && (
                   <TouchableOpacity

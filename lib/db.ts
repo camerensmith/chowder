@@ -4,13 +4,26 @@
 import { Platform } from 'react-native';
 import { Author, Place, List, ListItem, Visit, Dish, Category, Tag } from '../types';
 
+// Helper function to safely access localStorage (web only)
+function getLocalStorage(): any {
+  if (Platform.OS === 'web' && typeof globalThis !== 'undefined') {
+    try {
+      return (globalThis as any).localStorage;
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
 // Only import SQLite on native platforms
 let SQLite: typeof import('expo-sqlite') | null = null;
 if (Platform.OS !== 'web') {
   SQLite = require('expo-sqlite');
 }
 
-type SQLiteDatabase = import('expo-sqlite').SQLiteDatabase;
+// Type for SQLite database - using any to avoid strict type checking issues with expo-sqlite
+type SQLiteDatabase = any;
 let db: SQLiteDatabase | null = null;
 
 // Initialize database
@@ -54,6 +67,7 @@ export async function initializeDatabase(): Promise<void> {
         notes TEXT,
         overallRatingManual REAL,
         ratingMode TEXT CHECK(ratingMode IN ('aggregate', 'overall')),
+        coverImageUri TEXT,
         createdAt INTEGER NOT NULL,
         updatedAt INTEGER NOT NULL
       );
@@ -84,7 +98,6 @@ export async function initializeDatabase(): Promise<void> {
       CREATE TABLE IF NOT EXISTS visits (
         id TEXT PRIMARY KEY,
         placeId TEXT NOT NULL,
-        rating INTEGER NOT NULL CHECK(rating >= 1 AND rating <= 5),
         notes TEXT,
         photoUri TEXT,
         createdAt INTEGER NOT NULL,
@@ -141,6 +154,26 @@ export async function initializeDatabase(): Promise<void> {
       CREATE INDEX IF NOT EXISTS idx_dishes_visitId ON dishes(visitId);
     `);
 
+    // Migration: Add coverImageUri column to places table if it doesn't exist
+    try {
+      await db.execAsync('ALTER TABLE places ADD COLUMN coverImageUri TEXT;');
+    } catch (e: any) {
+      // Column already exists, ignore error
+      if (!e.message?.includes('duplicate column')) {
+        console.warn('Migration warning:', e);
+      }
+    }
+
+    // Migration: Remove rating column from visits table if it exists
+    try {
+      await db.execAsync('ALTER TABLE visits DROP COLUMN rating;');
+    } catch (e: any) {
+      // Column doesn't exist or already removed, ignore error
+      if (!e.message?.includes('no such column')) {
+        console.warn('Migration warning:', e);
+      }
+    }
+
     console.log('✅ Database initialized');
     
     // Initialize default categories if they don't exist
@@ -189,15 +222,16 @@ async function initializeDefaultCategories(): Promise<void> {
           existing.push(category);
         }
       }
-      localStorage.setItem('chowder_categories', JSON.stringify(existing));
+      const storage = getLocalStorage();
+      if (storage) storage.setItem('chowder_categories', JSON.stringify(existing));
       return;
     }
 
     if (!db) return;
 
     // Check which categories already exist
-    const existing = await db.getAllAsync<Category>('SELECT * FROM categories WHERE type = ?', ['place']);
-    const existingNames = new Set(existing.map(c => c.name));
+    const existing = (await db.getAllAsync('SELECT * FROM categories WHERE type = ?', ['place'])) as Category[];
+    const existingNames = new Set(existing.map((c: Category) => c.name));
 
     // Insert missing default categories
     for (let i = 0; i < defaultCategories.length; i++) {
@@ -223,12 +257,13 @@ function generateId(): string {
 
 export async function getAuthor(): Promise<Author | null> {
   if (Platform.OS === 'web') {
-    const stored = localStorage.getItem('chowder_author');
+    const storage = getLocalStorage();
+    const stored = storage ? storage.getItem('chowder_author') : null;
     return stored ? JSON.parse(stored) : null;
   }
   
   if (!db) throw new Error('Database not initialized');
-  return await db.getFirstAsync<Author>('SELECT * FROM author LIMIT 1');
+  return (await db.getFirstAsync('SELECT * FROM author LIMIT 1')) as Author | null;
 }
 
 export async function createAuthor(displayName: string, avatarUri?: string): Promise<Author> {
@@ -237,7 +272,8 @@ export async function createAuthor(displayName: string, avatarUri?: string): Pro
   const author: Author = { id, displayName, avatarUri, createdAt: now };
 
   if (Platform.OS === 'web') {
-    localStorage.setItem('chowder_author', JSON.stringify(author));
+    const storage = getLocalStorage();
+    if (storage) storage.setItem('chowder_author', JSON.stringify(author));
     return author;
   }
 
@@ -254,7 +290,8 @@ export async function updateAuthor(updates: Partial<Pick<Author, 'displayName' |
     const author = await getAuthor();
     if (!author) throw new Error('Author not found');
     const updated = { ...author, ...updates };
-    localStorage.setItem('chowder_author', JSON.stringify(updated));
+    const storage = getLocalStorage();
+    if (storage) storage.setItem('chowder_author', JSON.stringify(updated));
     return;
   }
 
@@ -279,47 +316,34 @@ export async function createPlace(
   const place: Place = { id, name, address, latitude, longitude, categoryId, notes, ratingMode: 'overall', createdAt: now, updatedAt: now };
 
   if (Platform.OS === 'web') {
-    const stored = localStorage.getItem('chowder_places');
+    const storage = getLocalStorage();
+    const stored = storage ? storage.getItem('chowder_places') : null;
     const places: Place[] = stored ? JSON.parse(stored) : [];
     places.push(place);
-    localStorage.setItem('chowder_places', JSON.stringify(places));
+    if (storage) storage.setItem('chowder_places', JSON.stringify(places));
     return place;
   }
 
   if (!db) throw new Error('Database not initialized');
   await db.runAsync(
-    'INSERT INTO places (id, name, address, latitude, longitude, categoryId, notes, overallRatingManual, ratingMode, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-    [id, name, address || null, latitude, longitude, categoryId || null, notes || null, null, 'overall', now, now]
+    'INSERT INTO places (id, name, address, latitude, longitude, categoryId, notes, overallRatingManual, ratingMode, coverImageUri, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    [id, name, address || null, latitude, longitude, categoryId || null, notes || null, null, 'overall', null, now, now]
   );
   return place;
 }
 
 export async function getAllPlaces(): Promise<Place[]> {
   if (Platform.OS === 'web') {
-    const stored = localStorage.getItem('chowder_places');
+    const storage = getLocalStorage();
+    const stored = storage ? storage.getItem('chowder_places') : null;
     if (!stored) return [];
     const places: Place[] = JSON.parse(stored);
-    // Calculate ratings from visits
-    const visits = await getAllVisits();
-    places.forEach(place => {
-      const placeVisits = visits.filter(v => v.placeId === place.id);
-      if (placeVisits.length > 0) {
-        place.overallRating = placeVisits.reduce((sum, v) => sum + v.rating, 0) / placeVisits.length;
-      }
-    });
+    // Visits no longer have ratings - overallRating is only from overallRatingManual
     return places.sort((a, b) => b.createdAt - a.createdAt);
   }
 
   if (!db) throw new Error('Database not initialized');
-  const places = await db.getAllAsync<Place>('SELECT * FROM places ORDER BY createdAt DESC');
-  // Calculate ratings
-  for (const place of places) {
-    const visits = await getVisitsForPlace(place.id);
-    if (visits.length > 0) {
-      place.overallRating = visits.reduce((sum, v) => sum + v.rating, 0) / visits.length;
-    }
-  }
-  return places;
+  return (await db.getAllAsync('SELECT * FROM places ORDER BY createdAt DESC')) as Place[];
 }
 
 export async function getPlace(placeId: string): Promise<Place | null> {
@@ -329,35 +353,30 @@ export async function getPlace(placeId: string): Promise<Place | null> {
     if (place) {
       // Load tagIds
       place.tagIds = await getPlaceTags(placeId);
-      const visits = await getVisitsForPlace(placeId);
-      if (visits.length > 0) {
-        place.overallRating = visits.reduce((sum, v) => sum + v.rating, 0) / visits.length;
-      }
+      // Visits no longer have ratings - overallRating is only from overallRatingManual
     }
     return place || null;
   }
 
   if (!db) throw new Error('Database not initialized');
-  const place = await db.getFirstAsync<Place>('SELECT * FROM places WHERE id = ?', [placeId]);
+  const place = (await db.getFirstAsync('SELECT * FROM places WHERE id = ?', [placeId])) as Place | null;
   if (place) {
     // Load tagIds
     const tagIds = await getPlaceTags(placeId);
     place.tagIds = tagIds;
-    const visits = await getVisitsForPlace(placeId);
-    if (visits.length > 0) {
-      place.overallRating = visits.reduce((sum, v) => sum + v.rating, 0) / visits.length;
-    }
+    // Visits no longer have ratings - overallRating is only from overallRatingManual
   }
   return place;
 }
 
-export async function updatePlace(placeId: string, updates: Partial<Pick<Place, 'name' | 'address' | 'categoryId' | 'notes' | 'overallRatingManual' | 'ratingMode'>>): Promise<void> {
+export async function updatePlace(placeId: string, updates: Partial<Pick<Place, 'name' | 'address' | 'categoryId' | 'notes' | 'overallRatingManual' | 'ratingMode' | 'coverImageUri'>>): Promise<void> {
   if (Platform.OS === 'web') {
     const places = await getAllPlaces();
     const index = places.findIndex(p => p.id === placeId);
     if (index === -1) throw new Error('Place not found');
     places[index] = { ...places[index], ...updates, updatedAt: Date.now() };
-    localStorage.setItem('chowder_places', JSON.stringify(places));
+    const storage = getLocalStorage();
+    if (storage) storage.setItem('chowder_places', JSON.stringify(places));
     return;
   }
 
@@ -371,14 +390,17 @@ export async function deletePlace(placeId: string): Promise<void> {
   if (Platform.OS === 'web') {
     const places = await getAllPlaces();
     const filtered = places.filter(p => p.id !== placeId);
-    localStorage.setItem('chowder_places', JSON.stringify(filtered));
+    const storage1 = getLocalStorage();
+    if (storage1) storage1.setItem('chowder_places', JSON.stringify(filtered));
     // Also remove list items and visits (cascade)
     const listItems = await getAllListItems();
     const filteredItems = listItems.filter(li => li.placeId !== placeId);
-    localStorage.setItem('chowder_list_items', JSON.stringify(filteredItems));
+    const storage2 = getLocalStorage();
+    if (storage2) storage2.setItem('chowder_list_items', JSON.stringify(filteredItems));
     const visits = await getAllVisits();
     const filteredVisits = visits.filter(v => v.placeId !== placeId);
-    localStorage.setItem('chowder_visits', JSON.stringify(filteredVisits));
+    const storage3 = getLocalStorage();
+    if (storage3) storage3.setItem('chowder_visits', JSON.stringify(filteredVisits));
     return;
   }
 
@@ -394,10 +416,11 @@ export async function createList(name: string, description?: string, category?: 
   const list: List = { id, name, description, category, city, createdAt: now, updatedAt: now };
 
   if (Platform.OS === 'web') {
-    const stored = localStorage.getItem('chowder_lists');
+    const storage = getLocalStorage();
+    const stored = storage ? storage.getItem('chowder_lists') : null;
     const lists: List[] = stored ? JSON.parse(stored) : [];
     lists.push(list);
-    localStorage.setItem('chowder_lists', JSON.stringify(lists));
+    if (storage) storage.setItem('chowder_lists', JSON.stringify(lists));
     return list;
   }
 
@@ -411,7 +434,8 @@ export async function createList(name: string, description?: string, category?: 
 
 export async function getAllLists(): Promise<List[]> {
   if (Platform.OS === 'web') {
-    const stored = localStorage.getItem('chowder_lists');
+    const storage = getLocalStorage();
+    const stored = storage ? storage.getItem('chowder_lists') : null;
     if (!stored) return [];
     const lists: List[] = JSON.parse(stored);
     // Calculate ratings from places
@@ -431,16 +455,16 @@ export async function getAllLists(): Promise<List[]> {
   }
 
   if (!db) throw new Error('Database not initialized');
-  const lists = await db.getAllAsync<List>('SELECT * FROM lists ORDER BY updatedAt DESC');
+  const lists = (await db.getAllAsync('SELECT * FROM lists ORDER BY updatedAt DESC')) as List[];
   // Calculate ratings
   for (const list of lists) {
     const items = await getListItems(list.id);
     if (items.length > 0) {
-      const placeIds = items.map(li => li.placeId);
-      const places = await Promise.all(placeIds.map(id => getPlace(id)));
-      const ratings = places.map(p => p?.overallRating).filter((r): r is number => r !== undefined);
+      const placeIds = items.map((li: ListItem) => li.placeId);
+      const places = await Promise.all(placeIds.map((id: string) => getPlace(id)));
+      const ratings = places.map((p: Place | null) => p?.overallRating).filter((r: number | undefined): r is number => r !== undefined);
       if (ratings.length > 0) {
-        list.overallRating = ratings.reduce((sum, r) => sum + r, 0) / ratings.length;
+        list.overallRating = ratings.reduce((sum: number, r: number) => sum + r, 0) / ratings.length;
       }
     }
   }
@@ -454,7 +478,7 @@ export async function getList(listId: string): Promise<List | null> {
   }
 
   if (!db) throw new Error('Database not initialized');
-  return await db.getFirstAsync<List>('SELECT * FROM lists WHERE id = ?', [listId]);
+  return (await db.getFirstAsync('SELECT * FROM lists WHERE id = ?', [listId])) as List | null;
 }
 
 export async function updateList(listId: string, updates: Partial<Pick<List, 'name' | 'description' | 'category' | 'city'>>): Promise<void> {
@@ -463,7 +487,8 @@ export async function updateList(listId: string, updates: Partial<Pick<List, 'na
     const index = lists.findIndex(l => l.id === listId);
     if (index === -1) throw new Error('List not found');
     lists[index] = { ...lists[index], ...updates, updatedAt: Date.now() };
-    localStorage.setItem('chowder_lists', JSON.stringify(lists));
+    const storage = getLocalStorage();
+    if (storage) storage.setItem('chowder_lists', JSON.stringify(lists));
     return;
   }
 
@@ -476,16 +501,22 @@ export async function updateList(listId: string, updates: Partial<Pick<List, 'na
 export async function deleteList(listId: string): Promise<void> {
   if (Platform.OS === 'web') {
     const lists = await getAllLists();
-    const filtered = lists.filter(l => l.id !== listId);
-    localStorage.setItem('chowder_lists', JSON.stringify(filtered));
-    // Also remove list items
-    const listItems = await getAllListItems();
-    const filteredItems = listItems.filter(li => li.listId !== listId);
-    localStorage.setItem('chowder_list_items', JSON.stringify(filteredItems));
+    const filtered = lists.filter((l: List) => l.id !== listId);
+    const storage = getLocalStorage();
+    if (storage) {
+      storage.setItem('chowder_lists', JSON.stringify(filtered));
+      // Also remove list items
+      const listItems = await getAllListItems();
+      const filteredItems = listItems.filter((li: ListItem) => li.listId !== listId);
+      storage.setItem('chowder_list_items', JSON.stringify(filteredItems));
+    }
     return;
   }
 
   if (!db) throw new Error('Database not initialized');
+  // Delete list items first (CASCADE should handle this, but being explicit)
+  await db.runAsync('DELETE FROM list_items WHERE listId = ?', [listId]);
+  // Then delete the list
   await db.runAsync('DELETE FROM lists WHERE id = ?', [listId]);
 }
 
@@ -504,7 +535,8 @@ export async function addPlaceToList(listId: string, placeId: string): Promise<v
       createdAt: Date.now()
     };
     listItems.push(newItem);
-    localStorage.setItem('chowder_list_items', JSON.stringify(listItems));
+    const storage = getLocalStorage();
+    if (storage) storage.setItem('chowder_list_items', JSON.stringify(listItems));
     // Update list updatedAt
     const list = await getList(listId);
     if (list) await updateList(listId, {});
@@ -512,10 +544,10 @@ export async function addPlaceToList(listId: string, placeId: string): Promise<v
   }
 
   if (!db) throw new Error('Database not initialized');
-  const existing = await db.getAllAsync<ListItem>(
+  const existing = (await db.getAllAsync(
     'SELECT * FROM list_items WHERE listId = ? ORDER BY [order] DESC LIMIT 1',
     [listId]
-  );
+  )) as ListItem[];
   const nextOrder = existing.length > 0 ? (existing[0].order + 1) : 0;
   await db.runAsync(
     'INSERT INTO list_items (id, listId, placeId, [order], createdAt) VALUES (?, ?, ?, ?, ?)',
@@ -528,7 +560,8 @@ export async function removePlaceFromList(listId: string, placeId: string): Prom
   if (Platform.OS === 'web') {
     const listItems = await getAllListItems();
     const filtered = listItems.filter(li => !(li.listId === listId && li.placeId === placeId));
-    localStorage.setItem('chowder_list_items', JSON.stringify(filtered));
+    const storage = getLocalStorage();
+    if (storage) storage.setItem('chowder_list_items', JSON.stringify(filtered));
     await updateList(listId, {});
     return;
   }
@@ -545,40 +578,42 @@ export async function getListItems(listId: string): Promise<ListItem[]> {
   }
 
   if (!db) throw new Error('Database not initialized');
-  return await db.getAllAsync<ListItem>(
+  return (await db.getAllAsync(
     'SELECT * FROM list_items WHERE listId = ? ORDER BY [order] ASC',
     [listId]
-  );
+  )) as ListItem[];
 }
 
 async function getAllListItems(): Promise<ListItem[]> {
   if (Platform.OS === 'web') {
-    const stored = localStorage.getItem('chowder_list_items');
+    const storage = getLocalStorage();
+    const stored = storage ? storage.getItem('chowder_list_items') : null;
     return stored ? JSON.parse(stored) : [];
   }
 
   if (!db) throw new Error('Database not initialized');
-  return await db.getAllAsync<ListItem>('SELECT * FROM list_items');
+  return (await db.getAllAsync('SELECT * FROM list_items')) as ListItem[];
 }
 
 // ===== VISIT QUERIES =====
 
-export async function createVisit(placeId: string, rating: number, notes?: string, photoUri?: string): Promise<Visit> {
+export async function createVisit(placeId: string, notes?: string, photoUri?: string): Promise<Visit> {
   const id = generateId();
   const now = Date.now();
-  const visit: Visit = { id, placeId, rating, notes, photoUri, createdAt: now, updatedAt: now };
+  const visit: Visit = { id, placeId, notes, photoUri, createdAt: now, updatedAt: now };
 
   if (Platform.OS === 'web') {
     const visits = await getAllVisits();
     visits.push(visit);
-    localStorage.setItem('chowder_visits', JSON.stringify(visits));
+    const storage = getLocalStorage();
+    if (storage) storage.setItem('chowder_visits', JSON.stringify(visits));
     return visit;
   }
 
   if (!db) throw new Error('Database not initialized');
   await db.runAsync(
-    'INSERT INTO visits (id, placeId, rating, notes, photoUri, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?)',
-    [id, placeId, rating, notes || null, photoUri || null, now, now]
+    'INSERT INTO visits (id, placeId, notes, photoUri, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?)',
+    [id, placeId, notes || null, photoUri || null, now, now]
   );
   return visit;
 }
@@ -590,20 +625,38 @@ export async function getVisitsForPlace(placeId: string): Promise<Visit[]> {
   }
 
   if (!db) throw new Error('Database not initialized');
-  return await db.getAllAsync<Visit>(
+  return (await db.getAllAsync(
     'SELECT * FROM visits WHERE placeId = ? ORDER BY createdAt DESC',
     [placeId]
-  );
+  )) as Visit[];
+}
+
+export async function updateVisit(visitId: string, updates: Partial<Pick<Visit, 'notes' | 'photoUri'>>): Promise<void> {
+  if (Platform.OS === 'web') {
+    const visits = await getAllVisits();
+    const index = visits.findIndex(v => v.id === visitId);
+    if (index === -1) throw new Error('Visit not found');
+    visits[index] = { ...visits[index], ...updates, updatedAt: Date.now() };
+    const storage = getLocalStorage();
+    if (storage) storage.setItem('chowder_visits', JSON.stringify(visits));
+    return;
+  }
+
+  if (!db) throw new Error('Database not initialized');
+  const fields = Object.keys(updates).map(k => `${k} = ?`).join(', ');
+  const values = [...Object.values(updates), Date.now(), visitId];
+  await db.runAsync(`UPDATE visits SET ${fields}, updatedAt = ? WHERE id = ?`, values);
 }
 
 async function getAllVisits(): Promise<Visit[]> {
   if (Platform.OS === 'web') {
-    const stored = localStorage.getItem('chowder_visits');
+    const storage = getLocalStorage();
+    const stored = storage ? storage.getItem('chowder_visits') : null;
     return stored ? JSON.parse(stored) : [];
   }
 
   if (!db) throw new Error('Database not initialized');
-  return await db.getAllAsync<Visit>('SELECT * FROM visits');
+  return (await db.getAllAsync('SELECT * FROM visits')) as Visit[];
 }
 
 // ===== CATEGORY QUERIES =====
@@ -616,7 +669,8 @@ export async function createCategory(name: string, type: 'place' | 'dish', paren
   if (Platform.OS === 'web') {
     const categories = await getAllCategories();
     categories.push(category);
-    localStorage.setItem('chowder_categories', JSON.stringify(categories));
+    const storage = getLocalStorage();
+    if (storage) storage.setItem('chowder_categories', JSON.stringify(categories));
     return category;
   }
 
@@ -636,10 +690,10 @@ export async function getCategory(categoryId: string): Promise<Category | null> 
   }
 
   if (!db) throw new Error('Database not initialized');
-  return await db.getFirstAsync<Category>(
+  return (await db.getFirstAsync(
     'SELECT * FROM categories WHERE id = ?',
     [categoryId]
-  );
+  )) as Category | null;
 }
 
 export async function getCategoriesByType(type: 'place' | 'dish'): Promise<Category[]> {
@@ -656,10 +710,10 @@ export async function getCategoriesByType(type: 'place' | 'dish'): Promise<Categ
   }
 
   if (!db) throw new Error('Database not initialized');
-  return await db.getAllAsync<Category>(
+  return (await db.getAllAsync(
     'SELECT * FROM categories WHERE type = ? ORDER BY orderIndex ASC, name ASC',
     [type]
-  );
+  )) as Category[];
 }
 
 export async function updateCategoryOrder(categoryId: string, newOrder: number): Promise<void> {
@@ -668,7 +722,8 @@ export async function updateCategoryOrder(categoryId: string, newOrder: number):
     const index = categories.findIndex(c => c.id === categoryId);
     if (index !== -1) {
       categories[index].order = newOrder;
-      localStorage.setItem('chowder_categories', JSON.stringify(categories));
+      const storage = getLocalStorage();
+    if (storage) storage.setItem('chowder_categories', JSON.stringify(categories));
     }
     return;
   }
@@ -681,7 +736,8 @@ export async function deleteCategory(categoryId: string): Promise<void> {
   if (Platform.OS === 'web') {
     const categories = await getAllCategories();
     const filtered = categories.filter(c => c.id !== categoryId);
-    localStorage.setItem('chowder_categories', JSON.stringify(filtered));
+    const storage = getLocalStorage();
+    if (storage) storage.setItem('chowder_categories', JSON.stringify(filtered));
     return;
   }
 
@@ -691,15 +747,16 @@ export async function deleteCategory(categoryId: string): Promise<void> {
 
 async function getAllCategories(): Promise<Category[]> {
   if (Platform.OS === 'web') {
-    const stored = localStorage.getItem('chowder_categories');
+    const storage = getLocalStorage();
+    const stored = storage ? storage.getItem('chowder_categories') : null;
     return stored ? JSON.parse(stored) : [];
   }
 
   if (!db) throw new Error('Database not initialized');
-  const results = await db.getAllAsync<Category & { orderIndex: number }>(
+  const results = (await db.getAllAsync(
     'SELECT *, orderIndex as order FROM categories'
-  );
-  return results.map(c => ({ ...c, order: c.orderIndex }));
+  )) as (Category & { orderIndex: number })[];
+  return results.map((c: Category & { orderIndex: number }) => ({ ...c, order: c.orderIndex }));
 }
 
 // ===== TAG QUERIES =====
@@ -716,7 +773,8 @@ export async function createTag(name: string, color?: string): Promise<Tag> {
       throw new Error('Tag with this name already exists');
     }
     tags.push(tag);
-    localStorage.setItem('chowder_tags', JSON.stringify(tags));
+    const storage = getLocalStorage();
+    if (storage) storage.setItem('chowder_tags', JSON.stringify(tags));
     return tag;
   }
 
@@ -730,12 +788,13 @@ export async function createTag(name: string, color?: string): Promise<Tag> {
 
 export async function getAllTags(): Promise<Tag[]> {
   if (Platform.OS === 'web') {
-    const stored = localStorage.getItem('chowder_tags');
+    const storage = getLocalStorage();
+    const stored = storage ? storage.getItem('chowder_tags') : null;
     return stored ? JSON.parse(stored) : [];
   }
 
   if (!db) throw new Error('Database not initialized');
-  return await db.getAllAsync<Tag>('SELECT * FROM tags ORDER BY name ASC');
+  return (await db.getAllAsync('SELECT * FROM tags ORDER BY name ASC')) as Tag[];
 }
 
 export async function getTagsForPlace(placeId: string): Promise<Tag[]> {
@@ -746,13 +805,13 @@ export async function getTagsForPlace(placeId: string): Promise<Tag[]> {
   }
 
   if (!db) throw new Error('Database not initialized');
-  return await db.getAllAsync<Tag>(
+  return (await db.getAllAsync(
     `SELECT t.* FROM tags t
      INNER JOIN place_tags pt ON t.id = pt.tagId
      WHERE pt.placeId = ?
      ORDER BY t.name ASC`,
     [placeId]
-  );
+  )) as Tag[];
 }
 
 export async function addTagToPlace(placeId: string, tagId: string): Promise<void> {
@@ -760,7 +819,8 @@ export async function addTagToPlace(placeId: string, tagId: string): Promise<voi
     const placeTags = await getPlaceTags(placeId);
     if (!placeTags.includes(tagId)) {
       placeTags.push(tagId);
-      localStorage.setItem(`chowder_place_tags_${placeId}`, JSON.stringify(placeTags));
+      const storage = getLocalStorage();
+      if (storage) storage.setItem(`chowder_place_tags_${placeId}`, JSON.stringify(placeTags));
     }
     return;
   }
@@ -773,7 +833,8 @@ export async function removeTagFromPlace(placeId: string, tagId: string): Promis
   if (Platform.OS === 'web') {
     const placeTags = await getPlaceTags(placeId);
     const filtered = placeTags.filter(id => id !== tagId);
-    localStorage.setItem(`chowder_place_tags_${placeId}`, JSON.stringify(filtered));
+    const storage = getLocalStorage();
+    if (storage) storage.setItem(`chowder_place_tags_${placeId}`, JSON.stringify(filtered));
     return;
   }
 
@@ -785,18 +846,20 @@ export async function deleteTag(tagId: string): Promise<void> {
   if (Platform.OS === 'web') {
     const tags = await getAllTags();
     const filtered = tags.filter(t => t.id !== tagId);
-    localStorage.setItem('chowder_tags', JSON.stringify(filtered));
+    const storage = getLocalStorage();
+    if (storage) storage.setItem('chowder_tags', JSON.stringify(filtered));
     // Also remove from all places
     const allPlaces = await getAllPlaces();
     for (const place of allPlaces) {
       if (place.tagIds) {
-        const filteredTagIds = place.tagIds.filter(id => id !== tagId);
+        const filteredTagIds = place.tagIds.filter((id: string) => id !== tagId);
         // Update place in storage
         const places = await getAllPlaces();
         const placeIndex = places.findIndex(p => p.id === place.id);
         if (placeIndex !== -1) {
           places[placeIndex].tagIds = filteredTagIds;
-          localStorage.setItem('chowder_places', JSON.stringify(places));
+          const storage2 = getLocalStorage();
+          if (storage2) storage2.setItem('chowder_places', JSON.stringify(places));
         }
       }
     }
@@ -810,12 +873,13 @@ export async function deleteTag(tagId: string): Promise<void> {
 
 async function getPlaceTags(placeId: string): Promise<string[]> {
   if (Platform.OS === 'web') {
-    const stored = localStorage.getItem(`chowder_place_tags_${placeId}`);
+    const storage = getLocalStorage();
+    const stored = storage ? storage.getItem(`chowder_place_tags_${placeId}`) : null;
     return stored ? JSON.parse(stored) : [];
   }
   if (!db) throw new Error('Database not initialized');
-  const results = await db.getAllAsync<{ tagId: string }>('SELECT tagId FROM place_tags WHERE placeId = ?', [placeId]);
-  return results.map(r => r.tagId);
+  const results = (await db.getAllAsync('SELECT tagId FROM place_tags WHERE placeId = ?', [placeId])) as { tagId: string }[];
+  return results.map((r: { tagId: string }) => r.tagId);
 }
 
 // ===== DISH QUERIES =====
@@ -828,7 +892,8 @@ export async function createDish(visitId: string, name: string, rating: number, 
   if (Platform.OS === 'web') {
     const dishes = await getAllDishes();
     dishes.push(dish);
-    localStorage.setItem('chowder_dishes', JSON.stringify(dishes));
+    const storage = getLocalStorage();
+    if (storage) storage.setItem('chowder_dishes', JSON.stringify(dishes));
     return dish;
   }
 
@@ -847,10 +912,10 @@ export async function getDishesForVisit(visitId: string): Promise<Dish[]> {
   }
 
   if (!db) throw new Error('Database not initialized');
-  return await db.getAllAsync<Dish>(
+  return (await db.getAllAsync(
     'SELECT * FROM dishes WHERE visitId = ? ORDER BY createdAt DESC',
     [visitId]
-  );
+  )) as Dish[];
 }
 
 export async function getDishesForPlace(placeId: string): Promise<Dish[]> {
@@ -862,13 +927,13 @@ export async function getDishesForPlace(placeId: string): Promise<Dish[]> {
   }
 
   if (!db) throw new Error('Database not initialized');
-  return await db.getAllAsync<Dish>(
+  return (await db.getAllAsync(
     `SELECT d.* FROM dishes d 
      INNER JOIN visits v ON d.visitId = v.id 
      WHERE v.placeId = ? 
      ORDER BY d.createdAt DESC`,
     [placeId]
-  );
+  )) as Dish[];
 }
 
 export async function updateDish(dishId: string, updates: Partial<Pick<Dish, 'name' | 'categoryId' | 'rating' | 'notes' | 'photoUri'>>): Promise<void> {
@@ -877,7 +942,8 @@ export async function updateDish(dishId: string, updates: Partial<Pick<Dish, 'na
     const index = dishes.findIndex(d => d.id === dishId);
     if (index === -1) throw new Error('Dish not found');
     dishes[index] = { ...dishes[index], ...updates, updatedAt: Date.now() };
-    localStorage.setItem('chowder_dishes', JSON.stringify(dishes));
+    const storage = getLocalStorage();
+    if (storage) storage.setItem('chowder_dishes', JSON.stringify(dishes));
     return;
   }
 
@@ -891,7 +957,8 @@ export async function deleteDish(dishId: string): Promise<void> {
   if (Platform.OS === 'web') {
     const dishes = await getAllDishes();
     const filtered = dishes.filter(d => d.id !== dishId);
-    localStorage.setItem('chowder_dishes', JSON.stringify(filtered));
+    const storage = getLocalStorage();
+    if (storage) storage.setItem('chowder_dishes', JSON.stringify(filtered));
     return;
   }
 
@@ -901,10 +968,11 @@ export async function deleteDish(dishId: string): Promise<void> {
 
 async function getAllDishes(): Promise<Dish[]> {
   if (Platform.OS === 'web') {
-    const stored = localStorage.getItem('chowder_dishes');
+    const storage = getLocalStorage();
+    const stored = storage ? storage.getItem('chowder_dishes') : null;
     return stored ? JSON.parse(stored) : [];
   }
 
   if (!db) throw new Error('Database not initialized');
-  return await db.getAllAsync<Dish>('SELECT * FROM dishes');
+  return (await db.getAllAsync('SELECT * FROM dishes')) as Dish[];
 }

@@ -14,10 +14,12 @@ export interface Place {
   latitude: number;
   longitude: number;
   categoryId?: string;
-  overallRating?: number; // Calculated from visits (when ratingMode is 'overall')
+  overallRating?: number; // Only from overallRatingManual (visits no longer have ratings)
   overallRatingManual?: number; // Manually set overall rating
   ratingMode?: 'aggregate' | 'overall'; // 'aggregate' = average of dish ratings, 'overall' = manual rating
   notes?: string;
+  coverImageUri?: string; // Cover image for the place
+  tagIds?: string[]; // Array of tag IDs (not stored in DB, loaded separately)
   createdAt: number;
   updatedAt: number;
 }
@@ -44,7 +46,6 @@ export interface ListItem {
 export interface Visit {
   id: string;
   placeId: string;
-  rating: number; // 1-5
   notes?: string;
   photoUri?: string;
   createdAt: number;

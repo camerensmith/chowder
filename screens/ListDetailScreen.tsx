@@ -13,9 +13,10 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RouteProp } from '@react-navigation/native';
 import { RootStackParamList } from '../types';
 import { theme } from '../lib/theme';
-import { getList, getListItems, getAllPlaces } from '../lib/db';
+import { getList, getListItems, getAllPlaces, addPlaceToList } from '../lib/db';
 import { List, Place } from '../types';
 import ShareCodeGenerator from '../components/ShareCodeGenerator';
+import PlaceSelectModal from '../components/PlaceSelectModal';
 
 type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
 type RoutePropType = RouteProp<RootStackParamList, 'ListDetail'>;
@@ -28,6 +29,7 @@ export default function ListDetailScreen() {
   const [places, setPlaces] = useState<Place[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [showShareModal, setShowShareModal] = useState(false);
+  const [showPlaceSelectModal, setShowPlaceSelectModal] = useState(false);
 
   useEffect(() => {
     loadList();
@@ -52,6 +54,15 @@ export default function ListDetailScreen() {
       console.error('Failed to load list:', error);
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const handleAddPlace = async (placeId: string) => {
+    try {
+      await addPlaceToList(listId, placeId);
+      await loadList();
+    } catch (error) {
+      console.error('Failed to add place to list:', error);
     }
   };
 
@@ -129,19 +140,31 @@ export default function ListDetailScreen() {
       )}
 
       {/* Places */}
-      {places.length === 0 ? (
-        <View style={styles.emptyState}>
-          <MaterialCommunityIcons name="map-marker-off" size={48} color={theme.colors.border} />
-          <Text style={styles.emptyText}>No places in this list</Text>
-        </View>
-      ) : (
-        <FlatList
-          data={places}
-          renderItem={renderPlaceCard}
-          keyExtractor={(item) => item.id}
-          contentContainerStyle={styles.listContent}
-        />
-      )}
+      <View style={styles.placesContainer}>
+        {places.length === 0 ? (
+          <View style={styles.emptyState}>
+            <MaterialCommunityIcons name="map-marker-off" size={48} color={theme.colors.border} />
+            <Text style={styles.emptyText}>No places in this list</Text>
+          </View>
+        ) : (
+          <FlatList
+            data={places}
+            renderItem={renderPlaceCard}
+            keyExtractor={(item) => item.id}
+            contentContainerStyle={styles.listContent}
+          />
+        )}
+        
+        {/* Add Place Button */}
+        <TouchableOpacity
+          style={styles.addButton}
+          onPress={() => setShowPlaceSelectModal(true)}
+          activeOpacity={0.8}
+        >
+          <MaterialCommunityIcons name="plus" size={24} color="#FFFFFF" />
+          <Text style={styles.addButtonText}>Add Place</Text>
+        </TouchableOpacity>
+      </View>
 
       {/* Share Modal */}
       {showShareModal && (
@@ -150,6 +173,14 @@ export default function ListDetailScreen() {
           onClose={() => setShowShareModal(false)}
         />
       )}
+
+      {/* Place Select Modal */}
+      <PlaceSelectModal
+        visible={showPlaceSelectModal}
+        listId={listId}
+        onClose={() => setShowPlaceSelectModal(false)}
+        onSelect={handleAddPlace}
+      />
     </SafeAreaView>
   );
 }
@@ -252,5 +283,27 @@ const styles = StyleSheet.create({
     ...theme.typography.body,
     color: theme.colors.textSecondary,
     marginTop: theme.spacing.md,
+  },
+  placesContainer: {
+    flex: 1,
+    position: 'relative',
+  },
+  addButton: {
+    position: 'absolute',
+    bottom: theme.spacing.lg,
+    right: theme.spacing.lg,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: theme.colors.primary,
+    paddingHorizontal: theme.spacing.lg,
+    paddingVertical: theme.spacing.md,
+    borderRadius: theme.borderRadius.full,
+    gap: theme.spacing.sm,
+    ...theme.shadow,
+  },
+  addButtonText: {
+    ...theme.typography.body,
+    color: '#FFFFFF',
+    fontWeight: '600',
   },
 });

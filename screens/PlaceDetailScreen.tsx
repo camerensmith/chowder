@@ -31,11 +31,15 @@ import {
   createDish,
   updateDish,
   deleteDish,
+  getCategory,
+  updateVisit,
 } from '../lib/db';
 import { Place, List, Visit, Dish, Category } from '../types';
 import PlaceEditModal from '../components/PlaceEditModal';
 import DishEditModal from '../components/DishEditModal';
+import VisitEditModal from '../components/VisitEditModal';
 import TagManager from '../components/TagManager';
+import DraggableStarRating from '../components/DraggableStarRating';
 
 type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
 type RoutePropType = RouteProp<RootStackParamList, 'PlaceDetail'>;
@@ -55,7 +59,10 @@ export default function PlaceDetailScreen() {
   const [showDishes, setShowDishes] = useState(false);
   const [showDishEditModal, setShowDishEditModal] = useState(false);
   const [editingDish, setEditingDish] = useState<Dish | null>(null);
+  const [showVisitEditModal, setShowVisitEditModal] = useState(false);
+  const [editingVisit, setEditingVisit] = useState<Visit | null>(null);
   const [mainImageUri, setMainImageUri] = useState<string | undefined>(undefined);
+  const [categoryName, setCategoryName] = useState<string | undefined>(undefined);
 
   useEffect(() => {
     loadPlace();
@@ -73,9 +80,21 @@ export default function PlaceDetailScreen() {
       const placeVisits = await getVisitsForPlace(placeId);
       setVisits(placeVisits);
 
-      // Get main image from most recent visit with photo
-      const visitWithPhoto = placeVisits.find(v => v.photoUri);
-      setMainImageUri(visitWithPhoto?.photoUri);
+      // Get main image from place cover image, fallback to most recent visit with photo
+      setMainImageUri(placeData.coverImageUri || placeVisits.find(v => v.photoUri)?.photoUri);
+
+      // Load category name if categoryId exists
+      if (placeData.categoryId) {
+        try {
+          const category = await getCategory(placeData.categoryId);
+          setCategoryName(category?.name);
+        } catch (error) {
+          console.error('Failed to load category:', error);
+          setCategoryName(undefined);
+        }
+      } else {
+        setCategoryName(undefined);
+      }
 
       // Get dishes for this place
       const placeDishes = await getDishesForPlace(placeId);
@@ -170,7 +189,7 @@ export default function PlaceDetailScreen() {
         // Create new dish - attach to most recent visit or create new visit
         let visitIdToUse: string;
         if (visits.length === 0) {
-          const newVisit = await createVisit(placeId, 0);
+          const newVisit = await createVisit(placeId);
           visitIdToUse = newVisit.id;
         } else {
           visitIdToUse = visits[0].id;
@@ -208,7 +227,7 @@ export default function PlaceDetailScreen() {
     );
   };
 
-  const handleSaveEdit = async (updates: { name: string; address: string; categoryId?: string; rating?: number; imageUri?: string; overallRatingManual?: number; ratingMode?: 'aggregate' | 'overall' }) => {
+  const handleSaveEdit = async (updates: { name: string; address: string; categoryId?: string; imageUri?: string; coverImageUri?: string; overallRatingManual?: number; ratingMode?: 'aggregate' | 'overall' }) => {
     if (!place) return;
     try {
       await updatePlace(placeId, {
@@ -217,25 +236,10 @@ export default function PlaceDetailScreen() {
         categoryId: updates.categoryId,
         overallRatingManual: updates.overallRatingManual,
         ratingMode: updates.ratingMode,
+        coverImageUri: updates.coverImageUri, // Save cover image to place
       });
       
-      // If rating or image is provided, create or update a visit
-      if (updates.rating !== undefined || updates.imageUri) {
-        const existingVisits = await getVisitsForPlace(placeId);
-        const rating = updates.rating !== undefined ? updates.rating : (existingVisits[0]?.rating || 0);
-        const imageUri = updates.imageUri || existingVisits[0]?.photoUri;
-        
-        if (existingVisits.length > 0) {
-          // Update the most recent visit
-          const mostRecentVisit = existingVisits[0];
-          // Note: We don't have updateVisit function yet, so we'll create a new visit
-          // In a real app, you'd want to update the existing visit
-          await createVisit(placeId, rating, mostRecentVisit.notes, imageUri);
-        } else {
-          // Create a new visit with the rating and/or image
-          await createVisit(placeId, rating, undefined, imageUri);
-        }
-      }
+      // Visits no longer store ratings - rating is only stored in overallRatingManual
       
       await loadPlace();
     } catch (error) {
@@ -257,7 +261,7 @@ export default function PlaceDetailScreen() {
     if (ratingMode === 'aggregate') {
       return calculateAggregateRating();
     } else {
-      // Use overallRatingManual if set, otherwise fall back to overallRating (from visits)
+      // Use overallRatingManual if set (visits no longer have ratings)
       return place.overallRatingManual ?? place.overallRating;
     }
   };
@@ -276,8 +280,8 @@ export default function PlaceDetailScreen() {
 
   const handleCheckIn = async () => {
     try {
-      // Create a new visit with default rating of 0 (user can edit later)
-      await createVisit(placeId, 0);
+      // Create a new visit (check-in)
+      await createVisit(placeId);
       await loadPlace();
       Alert.alert('Success', 'Check-in recorded!');
     } catch (error) {
@@ -286,7 +290,25 @@ export default function PlaceDetailScreen() {
     }
   };
 
-  const handleStarPress = async (starValue: number) => {
+  const handleEditVisit = (visit: Visit) => {
+    setEditingVisit(visit);
+    setShowVisitEditModal(true);
+  };
+
+  const handleSaveVisit = async (updates: { notes?: string }) => {
+    if (!editingVisit) return;
+    try {
+      await updateVisit(editingVisit.id, updates);
+      await loadPlace();
+      setShowVisitEditModal(false);
+      setEditingVisit(null);
+    } catch (error) {
+      console.error('Failed to update visit:', error);
+      Alert.alert('Error', 'Failed to update visit');
+    }
+  };
+
+  const handleRatingChange = async (newRating: number) => {
     if (!place) return;
     
     // Only allow rating when in 'overall' mode
@@ -296,7 +318,7 @@ export default function PlaceDetailScreen() {
     }
     
     try {
-      await updatePlace(placeId, { overallRatingManual: starValue });
+      await updatePlace(placeId, { overallRatingManual: newRating });
       await loadPlace();
     } catch (error) {
       console.error('Failed to update rating:', error);
@@ -305,35 +327,40 @@ export default function PlaceDetailScreen() {
   };
 
   const renderStars = (rating: number, interactive: boolean = false) => {
+    if (interactive) {
+      return (
+        <DraggableStarRating
+          rating={rating || 0}
+          onRatingChange={handleRatingChange}
+          size={24}
+          disabled={false}
+        />
+      );
+    }
+    
+    // Display mode - show with half stars
     return (
       <View style={styles.starsContainer}>
         {[...Array(5)].map((_, i) => {
           const starValue = i + 1;
-          const isFilled = starValue <= Math.round(rating);
+          const isHalf = rating >= starValue - 0.5 && rating < starValue;
+          const isFilled = rating >= starValue;
           
-          if (interactive) {
-            return (
-              <TouchableOpacity
-                key={i}
-                onPress={() => handleStarPress(starValue)}
-                activeOpacity={0.7}
-                style={styles.starButton}
-              >
-                <MaterialCommunityIcons
-                  name={isFilled ? 'star' : 'star-outline'}
-                  size={24}
-                  color={isFilled ? theme.colors.star : theme.colors.starEmpty}
-                />
-              </TouchableOpacity>
-            );
+          let iconName: string;
+          if (isFilled) {
+            iconName = 'star';
+          } else if (isHalf) {
+            iconName = 'star-half-full';
+          } else {
+            iconName = 'star-outline';
           }
           
           return (
             <MaterialCommunityIcons
               key={i}
-              name={isFilled ? 'star' : 'star-outline'}
+              name={iconName as any}
               size={20}
-              color={isFilled ? theme.colors.star : theme.colors.starEmpty}
+              color={isFilled || isHalf ? theme.colors.star : theme.colors.starEmpty}
             />
           );
         })}
@@ -372,65 +399,6 @@ export default function PlaceDetailScreen() {
           </View>
         )}
 
-        {/* Dishes Section */}
-        <View style={styles.section}>
-          <TouchableOpacity
-            style={styles.sectionHeader}
-            onPress={() => setShowDishes(!showDishes)}
-            activeOpacity={0.7}
-          >
-            <Text style={styles.sectionTitle}>Dishes</Text>
-            <MaterialCommunityIcons
-              name={showDishes ? 'chevron-up' : 'chevron-down'}
-              size={20}
-              color={theme.colors.textSecondary}
-            />
-          </TouchableOpacity>
-          {showDishes && (
-            <View style={styles.dishesContent}>
-              {dishes.length === 0 ? (
-                <Text style={styles.emptyText}>No dishes added yet</Text>
-              ) : (
-                dishes.map(dish => (
-                  <TouchableOpacity
-                    key={dish.id}
-                    style={styles.dishCard}
-                    onPress={() => handleEditDish(dish)}
-                    activeOpacity={0.7}
-                  >
-                    {dish.photoUri && (
-                      <Image source={{ uri: dish.photoUri }} style={styles.dishImage} />
-                    )}
-                    <View style={styles.dishContent}>
-                      <View style={styles.dishHeader}>
-                        <Text style={styles.dishName}>{dish.name}</Text>
-                        {renderStars(dish.rating)}
-                      </View>
-                      {dish.notes && <Text style={styles.dishNotes}>{dish.notes}</Text>}
-                    </View>
-                    <TouchableOpacity
-                      style={styles.dishDeleteButton}
-                      onPress={(e) => {
-                        e.stopPropagation();
-                        handleDeleteDish(dish.id);
-                      }}
-                    >
-                      <MaterialCommunityIcons name="delete-outline" size={20} color={theme.colors.error} />
-                    </TouchableOpacity>
-                  </TouchableOpacity>
-                ))
-              )}
-              <TouchableOpacity
-                style={styles.addDishButton}
-                onPress={handleAddDish}
-                activeOpacity={0.7}
-              >
-                <MaterialCommunityIcons name="plus" size={20} color={theme.colors.primary} />
-                <Text style={styles.addDishText}>Add Dish</Text>
-              </TouchableOpacity>
-            </View>
-          )}
-        </View>
         {/* Rating */}
         <View style={styles.ratingSection}>
           <View style={styles.ratingHeader}>
@@ -488,10 +456,83 @@ export default function PlaceDetailScreen() {
           </Text>
         </View>
 
+        {/* Dishes */}
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <Text style={styles.sectionTitle}>Dishes</Text>
+            <TouchableOpacity onPress={() => setShowDishes(!showDishes)}>
+              <MaterialCommunityIcons
+                name={showDishes ? 'chevron-up' : 'chevron-down'}
+                size={24}
+                color={theme.colors.textSecondary}
+              />
+            </TouchableOpacity>
+          </View>
+          {showDishes && (
+            <View>
+              {dishes.length === 0 ? (
+                <Text style={styles.emptyText}>No dishes yet</Text>
+              ) : (
+                dishes.map(dish => (
+                  <TouchableOpacity
+                    key={dish.id}
+                    style={styles.dishCard}
+                    onPress={() => handleEditDish(dish)}
+                    activeOpacity={0.7}
+                  >
+                    <Image 
+                      source={dish.photoUri ? { uri: dish.photoUri } : require('../assets/placeholder.png')} 
+                      style={styles.dishImage} 
+                      resizeMode="cover"
+                    />
+                    <View style={styles.dishContent}>
+                      <View style={styles.dishHeader}>
+                        <Text style={styles.dishName}>{dish.name}</Text>
+                        <View style={styles.dishRatingContainer}>
+                          {renderStars(dish.rating, false)}
+                          <Text style={styles.dishRatingText}>{dish.rating.toFixed(1)}</Text>
+                        </View>
+                      </View>
+                      {dish.notes && <Text style={styles.dishNotes}>{dish.notes}</Text>}
+                    </View>
+                    <TouchableOpacity
+                      style={styles.dishDeleteButton}
+                      onPress={(e) => {
+                        e.stopPropagation();
+                        handleDeleteDish(dish.id);
+                      }}
+                    >
+                      <MaterialCommunityIcons name="delete-outline" size={20} color={theme.colors.error} />
+                    </TouchableOpacity>
+                  </TouchableOpacity>
+                ))
+              )}
+              <TouchableOpacity
+                style={styles.addDishButton}
+                onPress={handleAddDish}
+                activeOpacity={0.7}
+              >
+                <MaterialCommunityIcons name="plus" size={20} color={theme.colors.primary} />
+                <Text style={styles.addDishText}>Add Dish</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+        </View>
+
         {/* Tags */}
         <View style={styles.section}>
           <TagManager placeId={placeId} onTagsChange={loadPlace} />
         </View>
+
+        {/* Category */}
+        {categoryName && (
+          <View style={styles.section}>
+            <View style={styles.categoryChip}>
+              <MaterialCommunityIcons name="tag" size={16} color={theme.colors.primary} />
+              <Text style={styles.categoryText}>{categoryName}</Text>
+            </View>
+          </View>
+        )}
 
         {/* Address */}
         {place.address && (
@@ -502,12 +543,21 @@ export default function PlaceDetailScreen() {
         )}
 
         {/* Notes */}
-        {place.notes && (
-          <View style={styles.section}>
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
             <Text style={styles.sectionTitle}>Notes</Text>
-            <Text style={styles.notes}>{place.notes}</Text>
+            <TouchableOpacity onPress={handleEdit}>
+              <MaterialCommunityIcons name="pencil" size={20} color={theme.colors.primary} />
+            </TouchableOpacity>
           </View>
-        )}
+          {place.notes ? (
+            <Text style={styles.notes}>{place.notes}</Text>
+          ) : (
+            <TouchableOpacity onPress={handleEdit}>
+              <Text style={styles.notesPlaceholder}>Tap to add notes</Text>
+            </TouchableOpacity>
+          )}
+        </View>
 
         {/* Lists */}
         <View style={styles.section}>
@@ -538,15 +588,23 @@ export default function PlaceDetailScreen() {
           {visits.length > 0 && (
             <>
               {visits.map(visit => (
-                <View key={visit.id} style={styles.visitCard}>
+                <TouchableOpacity
+                  key={visit.id}
+                  style={styles.visitCard}
+                  onPress={() => handleEditVisit(visit)}
+                  activeOpacity={0.7}
+                >
                   <View style={styles.visitHeader}>
-                    {renderStars(visit.rating)}
                     <Text style={styles.visitDate}>
                       {new Date(visit.createdAt).toLocaleDateString()}
                     </Text>
                   </View>
-                  {visit.notes && <Text style={styles.visitNotes}>{visit.notes}</Text>}
-                </View>
+                  {visit.notes ? (
+                    <Text style={styles.visitNotes}>{visit.notes}</Text>
+                  ) : (
+                    <Text style={styles.visitNotesPlaceholder}>Tap to add notes</Text>
+                  )}
+                </TouchableOpacity>
               ))}
             </>
           )}
@@ -605,18 +663,27 @@ export default function PlaceDetailScreen() {
       />
 
       {/* Dish Edit Modal */}
-      {visits.length > 0 && (
-        <DishEditModal
-          visible={showDishEditModal}
-          dish={editingDish}
-          visitId={visits[0].id}
-          onClose={() => {
-            setShowDishEditModal(false);
-            setEditingDish(null);
-          }}
-          onSave={handleSaveDish}
-        />
-      )}
+      <DishEditModal
+        visible={showDishEditModal}
+        dish={editingDish}
+        visitId={visits.length > 0 ? visits[0].id : ''}
+        onClose={() => {
+          setShowDishEditModal(false);
+          setEditingDish(null);
+        }}
+        onSave={handleSaveDish}
+      />
+
+      {/* Visit Edit Modal */}
+      <VisitEditModal
+        visible={showVisitEditModal}
+        visit={editingVisit}
+        onClose={() => {
+          setShowVisitEditModal(false);
+          setEditingVisit(null);
+        }}
+        onSave={handleSaveVisit}
+      />
     </SafeAreaView>
   );
 }
@@ -652,10 +719,11 @@ const styles = StyleSheet.create({
     padding: theme.spacing.lg,
   },
   ratingSection: {
+    backgroundColor: theme.colors.surface,
+    borderRadius: theme.borderRadius.md,
+    padding: theme.spacing.lg,
     marginBottom: theme.spacing.xl,
-    paddingBottom: theme.spacing.lg,
-    borderBottomWidth: 1,
-    borderBottomColor: theme.colors.border,
+    ...theme.shadow,
   },
   ratingHeader: {
     flexDirection: 'row',
@@ -715,6 +783,21 @@ const styles = StyleSheet.create({
     color: theme.colors.text,
     marginBottom: theme.spacing.md,
   },
+  categoryChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    backgroundColor: theme.colors.primary + '15',
+    paddingHorizontal: theme.spacing.md,
+    paddingVertical: theme.spacing.sm,
+    borderRadius: theme.borderRadius.full,
+    gap: theme.spacing.xs,
+  },
+  categoryText: {
+    ...theme.typography.bodySmall,
+    color: theme.colors.primary,
+    fontWeight: '600',
+  },
   address: {
     ...theme.typography.body,
     color: theme.colors.textSecondary,
@@ -723,6 +806,11 @@ const styles = StyleSheet.create({
   notes: {
     ...theme.typography.body,
     color: theme.colors.text,
+  },
+  notesPlaceholder: {
+    ...theme.typography.body,
+    color: theme.colors.textSecondary,
+    fontStyle: 'italic',
   },
   listItem: {
     flexDirection: 'row',
@@ -739,11 +827,13 @@ const styles = StyleSheet.create({
     padding: theme.spacing.md,
     borderRadius: theme.borderRadius.md,
     marginBottom: theme.spacing.sm,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
   },
   visitHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
+    justifyContent: 'flex-end',
     marginBottom: theme.spacing.xs,
   },
   visitDate: {
@@ -755,6 +845,12 @@ const styles = StyleSheet.create({
     color: theme.colors.text,
     marginTop: theme.spacing.xs,
   },
+  visitNotesPlaceholder: {
+    ...theme.typography.bodySmall,
+    color: theme.colors.textSecondary,
+    fontStyle: 'italic',
+    marginTop: theme.spacing.xs,
+  },
   imageContainer: {
     width: '100%',
     height: 300,
@@ -762,10 +858,31 @@ const styles = StyleSheet.create({
     borderRadius: theme.borderRadius.lg,
     overflow: 'hidden',
     backgroundColor: theme.colors.surface,
+    position: 'relative',
   },
   mainImage: {
     width: '100%',
     height: '100%',
+  },
+  imagePlaceholder: {
+    width: '100%',
+    height: '100%',
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: theme.colors.border,
+  },
+  imagePlaceholderText: {
+    ...theme.typography.body,
+    color: theme.colors.textSecondary,
+    marginTop: theme.spacing.sm,
+  },
+  imageOverlay: {
+    position: 'absolute',
+    bottom: theme.spacing.md,
+    right: theme.spacing.md,
+    backgroundColor: 'rgba(0, 0, 0, 0.6)',
+    borderRadius: theme.borderRadius.full,
+    padding: theme.spacing.sm,
   },
   sectionHeader: {
     flexDirection: 'row',
@@ -804,6 +921,16 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: theme.colors.text,
     flex: 1,
+  },
+  dishRatingContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: theme.spacing.xs,
+  },
+  dishRatingText: {
+    ...theme.typography.bodySmall,
+    color: theme.colors.text,
+    fontWeight: '600',
   },
   dishNotes: {
     ...theme.typography.bodySmall,

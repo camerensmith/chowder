@@ -42,14 +42,12 @@
       "backgroundColor": "#F8F3F5",
       "display": "standalone",
       "orientation": "portrait",
-      "startUrl": "/chowder/",
-      "description": "Track your favorite local food and restaurants",
-      "baseUrl": "/chowder"
+      "startUrl": "/",
+      "description": "Track your favorite local food and restaurants"
     },
     "scheme": "chowder",
     "plugins": [
       "expo-sqlite",
-      "expo-maps",
       [
         "expo-image-picker",
         {

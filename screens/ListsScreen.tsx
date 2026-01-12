@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import {
   View,
   Text,
@@ -25,6 +25,7 @@ export default function ListsScreen() {
   const navigation = useNavigation<NavigationProp>();
   const [lists, setLists] = useState<List[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const swipeableRefs = useRef<{ [key: string]: any }>({});
 
   useEffect(() => {
     loadLists();
@@ -53,6 +54,11 @@ export default function ListsScreen() {
   };
 
   const handleDeleteList = (list: List) => {
+    // Close the swipeable if it's open
+    if (swipeableRefs.current[list.id]) {
+      swipeableRefs.current[list.id].close();
+    }
+    
     Alert.alert(
       'Delete List',
       `Are you sure you want to delete "${list.name}"? This action cannot be undone.`,
@@ -67,7 +73,7 @@ export default function ListsScreen() {
               await loadLists();
             } catch (error) {
               console.error('Failed to delete list:', error);
-              Alert.alert('Error', 'Failed to delete list');
+              Alert.alert('Error', `Failed to delete list: ${error instanceof Error ? error.message : 'Unknown error'}`);
             }
           },
         },
@@ -88,12 +94,36 @@ export default function ListsScreen() {
   const renderListCard = ({ item }: { item: List }) => {
     const subtitle = [item.category, item.city].filter(Boolean).join(', ') || 'Places, Favors & rares';
     
-    // Use delete button approach for now (works on all platforms)
-    // Swipeable requires proper gesture handler setup which may not work in Expo Go
-    return (
-      <View style={styles.listCard}>
+    const renderRightActions = (progress: any, dragX: any) => {
+      return (
         <TouchableOpacity
-          style={styles.listCardContent}
+          style={styles.deleteAction}
+          onPress={() => {
+            handleDeleteList(item);
+          }}
+          activeOpacity={0.7}
+        >
+          <View style={styles.deleteActionContent}>
+            <MaterialCommunityIcons name="delete" size={24} color="#FFFFFF" />
+            <Text style={styles.deleteActionText}>Delete</Text>
+          </View>
+        </TouchableOpacity>
+      );
+    };
+    
+    return (
+      <Swipeable
+        ref={(ref) => {
+          if (ref) {
+            swipeableRefs.current[item.id] = ref;
+          } else {
+            delete swipeableRefs.current[item.id];
+          }
+        }}
+        renderRightActions={renderRightActions}
+      >
+        <TouchableOpacity
+          style={styles.listCard}
           onPress={() => navigation.navigate('ListDetail', { listId: item.id })}
           activeOpacity={0.7}
         >
@@ -102,21 +132,9 @@ export default function ListsScreen() {
             <Text style={styles.listSubtitle} numberOfLines={1}>{subtitle}</Text>
             {renderStarRating(item.overallRating)}
           </View>
-          <View style={styles.listCardActions}>
-            <TouchableOpacity
-              onPress={(e) => {
-                e.stopPropagation();
-                handleDeleteList(item);
-              }}
-              style={styles.webDeleteButton}
-              activeOpacity={0.7}
-            >
-              <MaterialCommunityIcons name="delete" size={20} color={theme.colors.error} />
-            </TouchableOpacity>
-            <MaterialCommunityIcons name="chevron-right" size={20} color={theme.colors.textSecondary} />
-          </View>
+          <MaterialCommunityIcons name="chevron-right" size={20} color={theme.colors.textSecondary} />
         </TouchableOpacity>
-      </View>
+      </Swipeable>
     );
   };
 
@@ -124,15 +142,15 @@ export default function ListsScreen() {
     <SafeAreaView style={styles.container} edges={['top']}>
       {/* Header */}
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => {}}>
-          <MaterialCommunityIcons name="home" size={24} color={theme.colors.primary} />
+        <TouchableOpacity onPress={loadLists}>
+          <MaterialCommunityIcons name="refresh" size={28} color={theme.colors.primary} />
         </TouchableOpacity>
         <View style={styles.logoContainer}>
-          <Image source={require('../assets/centericon.png')} style={styles.logoImage} />
+          <Image source={require('../assets/centericon.png')} style={styles.logoImage} resizeMode="contain" />
         </View>
         <TouchableOpacity onPress={handleCreateList}>
           <View style={styles.addButton}>
-            <MaterialCommunityIcons name="plus" size={20} color={theme.colors.onSecondary} />
+            <MaterialCommunityIcons name="plus" size={28} color={theme.colors.onSecondary} />
           </View>
         </TouchableOpacity>
       </View>
@@ -159,11 +177,6 @@ export default function ListsScreen() {
           onRefresh={loadLists}
         />
       )}
-
-      {/* Floating Add Button */}
-      <TouchableOpacity style={styles.fab} onPress={handleCreateList}>
-        <MaterialCommunityIcons name="plus" size={24} color={theme.colors.onSecondary} />
-      </TouchableOpacity>
     </SafeAreaView>
   );
 }
@@ -189,7 +202,6 @@ const styles = StyleSheet.create({
   logoImage: {
     width: 157,
     height: 48,
-    resizeMode: 'contain',
   },
   addButton: {
     width: 32,
@@ -211,16 +223,14 @@ const styles = StyleSheet.create({
     padding: theme.spacing.lg,
   },
   listCard: {
-    backgroundColor: theme.colors.background,
-    borderRadius: theme.borderRadius.md,
-    marginBottom: theme.spacing.md,
-    ...theme.shadow,
-  },
-  listCardContent: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+    backgroundColor: theme.colors.background,
+    borderRadius: theme.borderRadius.md,
+    marginBottom: theme.spacing.md,
     padding: theme.spacing.md,
+    ...theme.shadow,
   },
   listInfo: {
     flex: 1,
@@ -289,12 +299,23 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     flex: 1,
   },
-  listCardActions: {
-    flexDirection: 'row',
+  deleteAction: {
+    justifyContent: 'center',
     alignItems: 'center',
-    gap: theme.spacing.sm,
+    backgroundColor: theme.colors.error,
+    borderRadius: theme.borderRadius.md,
+    marginBottom: theme.spacing.md,
+    width: 100,
   },
-  webDeleteButton: {
-    padding: theme.spacing.xs,
+  deleteActionContent: {
+    justifyContent: 'center',
+    alignItems: 'center',
+    flex: 1,
+    gap: theme.spacing.xs,
+  },
+  deleteActionText: {
+    ...theme.typography.bodySmall,
+    color: '#FFFFFF',
+    fontWeight: '600',
   },
 });

@@ -57,11 +57,17 @@ export default function MapView({ places, onPlacePress, onPlaceSelect, onMapClic
   const selectedMarkerRef = useRef<any>(null);
   const nativeMapRef = useRef<any>(null);
 
+  // Initialize map (only once)
   useEffect(() => {
     if (Platform.OS !== 'web' || !mapRef.current) return;
 
     const initMap = async () => {
       if (!mapRef.current) return; // Type guard for async context
+      
+      // Check if map is already initialized
+      if (mapInstanceRef.current) {
+        return; // Map already exists, don't re-initialize
+      }
       
       const L = await import('leaflet');
       
@@ -77,6 +83,11 @@ export default function MapView({ places, onPlacePress, onPlaceSelect, onMapClic
         }
       }
 
+      // Check if container already has a map (Leaflet stores it in _leaflet_id)
+      if ((mapRef.current as any)._leaflet_id) {
+        return; // Container already has a map initialized
+      }
+
       // Initialize map
       const center = initialCenter || (places.length > 0 
         ? { lat: places[0].latitude, lng: places[0].longitude }
@@ -90,6 +101,42 @@ export default function MapView({ places, onPlacePress, onPlaceSelect, onMapClic
         attribution: '© OpenStreetMap contributors',
         maxZoom: 19,
       }).addTo(map);
+
+      // Handle map clicks for placing new pins
+      if (onMapClick) {
+        map.on('click', (e: any) => {
+          onMapClick(e.latlng.lat, e.latlng.lng);
+        });
+      }
+    };
+
+    initMap().catch(console.error);
+
+    return () => {
+      if (mapInstanceRef.current) {
+        try {
+          mapInstanceRef.current.remove();
+        } catch (e) {
+          // Map might already be removed, ignore error
+        }
+        mapInstanceRef.current = null;
+      }
+      // Clear Leaflet ID from container
+      if (mapRef.current && (mapRef.current as any)._leaflet_id) {
+        delete (mapRef.current as any)._leaflet_id;
+      }
+      markersRef.current = [];
+    };
+  }, []); // Only run once on mount
+
+  // Update markers whenever places change (separate effect)
+  useEffect(() => {
+    if (Platform.OS !== 'web' || !mapInstanceRef.current) return;
+
+    const updateMarkers = async () => {
+      const L = await import('leaflet');
+      const map = mapInstanceRef.current;
+      if (!map) return;
 
       // Set up custom pin icons (normal and highlighted)
       const pinIconUrl = pinImageUri || 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png';
@@ -112,16 +159,10 @@ export default function MapView({ places, onPlacePress, onPlaceSelect, onMapClic
         className: 'leaflet-marker-highlighted', // For custom CSS if needed
       });
 
-      // Handle map clicks for placing new pins
-      if (onMapClick) {
-        map.on('click', (e: any) => {
-          onMapClick(e.latlng.lat, e.latlng.lng);
-        });
-      }
-
       // Clear existing markers
       markersRef.current.forEach(marker => marker.remove());
       markersRef.current = [];
+      selectedMarkerRef.current = null;
 
       // Add markers for each place
       places.forEach((place) => {
@@ -153,36 +194,15 @@ export default function MapView({ places, onPlacePress, onPlaceSelect, onMapClic
         markersRef.current.push(marker);
       });
 
-      // Update marker icons based on selection (after all markers are created)
-      if (selectedPlaceId) {
-        markersRef.current.forEach((marker, index) => {
-          const place = places[index];
-          if (place && place.id === selectedPlaceId) {
-            marker.setIcon(highlightedPinIcon);
-            selectedMarkerRef.current = marker;
-          } else {
-            marker.setIcon(pinIcon);
-          }
-        });
-      }
-
-      // Fit map to show all markers (only if no initial center specified)
+      // Fit map to show all markers (only if no initial center specified and places exist)
       if (places.length > 0 && !initialCenter && !center) {
         const group = new L.default.FeatureGroup(markersRef.current);
         map.fitBounds(group.getBounds().pad(0.1));
       }
     };
 
-    initMap().catch(console.error);
-
-    return () => {
-      if (mapInstanceRef.current) {
-        mapInstanceRef.current.remove();
-        mapInstanceRef.current = null;
-      }
-      markersRef.current = [];
-    };
-  }, [places, initialCenter, initialZoom, onPlacePress, onPlaceSelect, selectedPlaceId]);
+    updateMarkers().catch(console.error);
+  }, [places, selectedPlaceId, onPlaceSelect, initialCenter, center]);
 
   // Handle dynamic center updates (for recentering)
   useEffect(() => {
@@ -239,11 +259,11 @@ export default function MapView({ places, onPlacePress, onPlaceSelect, onMapClic
     }
   }, [center, zoom, initialZoom]);
 
-  // Update marker highlighting when selection changes
+  // Update marker highlighting when selection changes (without recreating markers)
   useEffect(() => {
     if (Platform.OS !== 'web' || !mapInstanceRef.current || markersRef.current.length === 0) return;
 
-    const updateMarkers = async () => {
+    const updateHighlighting = async () => {
       const L = await import('leaflet');
       const pinIconUrl = pinImageUri || 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png';
       
@@ -263,8 +283,14 @@ export default function MapView({ places, onPlacePress, onPlaceSelect, onMapClic
         shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
       });
 
-      markersRef.current.forEach((marker, index) => {
-        const place = places[index];
+      // Find the place for each marker and update icon
+      markersRef.current.forEach((marker) => {
+        // Find the place that matches this marker's position
+        const place = places.find(p => 
+          Math.abs(p.latitude - (marker as any).getLatLng().lat) < 0.0001 &&
+          Math.abs(p.longitude - (marker as any).getLatLng().lng) < 0.0001
+        );
+        
         if (place) {
           const isSelected = selectedPlaceId === place.id;
           marker.setIcon(isSelected ? highlightedIcon : normalIcon);
@@ -275,8 +301,8 @@ export default function MapView({ places, onPlacePress, onPlaceSelect, onMapClic
       });
     };
 
-    updateMarkers().catch(console.error);
-  }, [selectedPlaceId, places]);
+    updateHighlighting().catch(console.error);
+  }, [selectedPlaceId]);
 
   // Native map implementation
   if (Platform.OS !== 'web') {

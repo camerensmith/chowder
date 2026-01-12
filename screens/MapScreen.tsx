@@ -14,12 +14,13 @@ import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList, Place } from '../types';
 import { theme } from '../lib/theme';
-import { getAllPlaces, createPlace, getCategory, getVisitsForPlace } from '../lib/db';
+import { getAllPlaces, createPlace, getCategory, getVisitsForPlace, getPlace, getListItems } from '../lib/db';
 import { searchPlaces, extractCoordinates, formatAddress, NominatimResult } from '../lib/maps';
 import MapView from '../components/MapView';
 import PlaceSearchModal from '../components/PlaceSearchModal';
 import PlaceSaveModal from '../components/PlaceSaveModal';
 import PlaceInfoCard from '../components/PlaceInfoCard';
+import MapFilterModal, { MapFilters } from '../components/MapFilterModal';
 
 type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
 
@@ -36,6 +37,16 @@ export default function MapScreen() {
   const [selectedPlace, setSelectedPlace] = useState<Place | null>(null);
   const [selectedPlaceCategory, setSelectedPlaceCategory] = useState<string | undefined>(undefined);
   const [selectedPlaceImage, setSelectedPlaceImage] = useState<string | undefined>(undefined);
+  const [showFilterModal, setShowFilterModal] = useState(false);
+  const [filters, setFilters] = useState<MapFilters>({
+    categoryIds: [],
+    tagIds: [],
+    listIds: [],
+    ratingFilterType: 'none',
+    searchText: undefined,
+  });
+  const [allPlaces, setAllPlaces] = useState<Place[]>([]);
+  const [filteredPlaces, setFilteredPlaces] = useState<Place[]>([]);
   
   // Calculate recenter button position
   const tabBarHeight = 80;
@@ -48,6 +59,14 @@ export default function MapScreen() {
     // Try to get location silently in background (don't show errors on initial load)
     getCurrentLocation(false);
   }, []);
+
+  // Reload places when screen comes into focus (e.g., after editing a place)
+  useEffect(() => {
+    const unsubscribe = navigation.addListener('focus', () => {
+      loadPlaces();
+    });
+    return unsubscribe;
+  }, [navigation]);
 
   const getCurrentLocation = async (showError = false) => {
     try {
@@ -86,11 +105,100 @@ export default function MapScreen() {
 
   const loadPlaces = async () => {
     try {
-      const allPlaces = await getAllPlaces();
-      setPlaces(allPlaces);
+      const loadedPlaces = await getAllPlaces();
+      setAllPlaces(loadedPlaces);
+      applyFilters(loadedPlaces, filters);
     } catch (error) {
       console.error('Failed to load places:', error);
     }
+  };
+
+  const applyFilters = async (places: Place[], currentFilters: MapFilters) => {
+    let filtered = [...places];
+
+    // Filter by text search
+    if (currentFilters.searchText && currentFilters.searchText.trim().length > 0) {
+      const searchLower = currentFilters.searchText.toLowerCase().trim();
+      filtered = filtered.filter(place => {
+        const nameMatch = place.name?.toLowerCase().includes(searchLower) || false;
+        const addressMatch = place.address?.toLowerCase().includes(searchLower) || false;
+        const notesMatch = place.notes?.toLowerCase().includes(searchLower) || false;
+        return nameMatch || addressMatch || notesMatch;
+      });
+    }
+
+    // Filter by categories
+    if (currentFilters.categoryIds.length > 0) {
+      filtered = filtered.filter(p => p.categoryId && currentFilters.categoryIds.includes(p.categoryId));
+    }
+
+    // Filter by tags
+    if (currentFilters.tagIds.length > 0) {
+      const placesWithTags = await Promise.all(
+        filtered.map(async (place) => {
+          // Load place with tags
+          const placeWithTags = await getPlace(place.id);
+          const tagIds = placeWithTags?.tagIds || [];
+          return { place, tagIds };
+        })
+      );
+      filtered = placesWithTags
+        .filter(({ tagIds }) => currentFilters.tagIds.some(tagId => tagIds.includes(tagId)))
+        .map(({ place }) => place);
+    }
+
+    // Filter by lists
+    if (currentFilters.listIds.length > 0) {
+      const placesInLists = await Promise.all(
+        currentFilters.listIds.map(async (listId) => {
+          const items = await getListItems(listId);
+          return items.map(item => item.placeId);
+        })
+      );
+      const placeIdsInLists = new Set(placesInLists.flat());
+      filtered = filtered.filter(p => placeIdsInLists.has(p.id));
+    }
+
+    // Filter by rating
+    if (currentFilters.ratingFilterType !== 'none') {
+      const placesWithRatings = await Promise.all(
+        filtered.map(async (place) => {
+          // Get the display rating for the place
+          const visits = await getVisitsForPlace(place.id);
+          let rating: number | undefined;
+          
+          // Visits no longer have ratings - only use overallRatingManual
+          rating = place.overallRatingManual;
+          
+          return { place, rating: rating || 0 };
+        })
+      );
+
+      const { ratingFilterType, minRating, maxRating, exactRating } = currentFilters;
+      const filteredPlacesWithRatings = placesWithRatings.filter((item) => {
+        const { rating } = item;
+        if (ratingFilterType === 'min' && minRating !== undefined) {
+          return rating >= minRating;
+        }
+        if (ratingFilterType === 'max' && maxRating !== undefined) {
+          return rating <= maxRating;
+        }
+        if (ratingFilterType === 'exact' && exactRating !== undefined) {
+          return Math.abs(rating - exactRating) < 0.1; // Allow small floating point differences
+        }
+        return true;
+      });
+      
+      filtered = filteredPlacesWithRatings.map((item) => item.place);
+    }
+
+    setFilteredPlaces(filtered);
+    setPlaces(filtered);
+  };
+
+  const handleFiltersChange = (newFilters: MapFilters) => {
+    setFilters(newFilters);
+    applyFilters(allPlaces, newFilters);
   };
 
   const handleSearchSelect = async (result: NominatimResult) => {
@@ -137,18 +245,33 @@ export default function MapScreen() {
   };
 
   const handlePlaceSelect = async (place: Place) => {
-    setSelectedPlace(place);
-    
-    // Load category name if categoryId exists
-    if (place.categoryId) {
-      try {
-        const category = await getCategory(place.categoryId);
-        setSelectedPlaceCategory(category?.name);
-      } catch (error) {
-        console.error('Failed to load category:', error);
+    // Reload the place from database to get latest data (including categoryId)
+    try {
+      const updatedPlace = await getPlace(place.id);
+      if (updatedPlace) {
+        setSelectedPlace(updatedPlace);
+        
+        // Load category name if categoryId exists
+        if (updatedPlace.categoryId) {
+          try {
+            const category = await getCategory(updatedPlace.categoryId);
+            setSelectedPlaceCategory(category?.name);
+          } catch (error) {
+            console.error('Failed to load category:', error);
+            setSelectedPlaceCategory(undefined);
+          }
+        } else {
+          setSelectedPlaceCategory(undefined);
+        }
+      } else {
+        // Fallback to original place if reload fails
+        setSelectedPlace(place);
         setSelectedPlaceCategory(undefined);
       }
-    } else {
+    } catch (error) {
+      console.error('Failed to reload place:', error);
+      // Fallback to original place
+      setSelectedPlace(place);
       setSelectedPlaceCategory(undefined);
     }
 
@@ -174,15 +297,15 @@ export default function MapScreen() {
     <SafeAreaView style={styles.container} edges={['top']}>
       {/* Header */}
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => navigation.navigate('Main')}>
-          <MaterialCommunityIcons name="home" size={24} color={theme.colors.primary} />
+        <TouchableOpacity onPress={loadPlaces}>
+          <MaterialCommunityIcons name="refresh" size={28} color={theme.colors.primary} />
         </TouchableOpacity>
         <View style={styles.logoContainer}>
           <Image source={require('../assets/centericon.png')} style={styles.logoImage} />
         </View>
         <TouchableOpacity onPress={() => setShowSearchModal(true)}>
           <View style={styles.addButton}>
-            <MaterialCommunityIcons name="plus" size={20} color={theme.colors.onSecondary} />
+            <MaterialCommunityIcons name="plus" size={28} color={theme.colors.onSecondary} />
           </View>
         </TouchableOpacity>
       </View>
@@ -198,8 +321,18 @@ export default function MapScreen() {
           onChangeText={setSearchQuery}
           onFocus={() => setShowSearchModal(true)}
         />
-        <TouchableOpacity>
-          <MaterialCommunityIcons name="filter-variant" size={20} color={theme.colors.secondary} />
+        <TouchableOpacity onPress={() => setShowFilterModal(true)}>
+          <View style={styles.filterButton}>
+            <MaterialCommunityIcons name="filter-variant" size={20} color={theme.colors.secondary} />
+            {(filters.categoryIds.length > 0 || filters.tagIds.length > 0 || filters.listIds.length > 0 || filters.ratingFilterType !== 'none') && (
+              <View style={styles.filterBadge}>
+                <Text style={styles.filterBadgeText}>
+                  {[filters.categoryIds.length, filters.tagIds.length, filters.listIds.length, filters.ratingFilterType !== 'none' ? 1 : 0]
+                    .reduce((a, b) => a + b, 0)}
+                </Text>
+              </View>
+            )}
+          </View>
         </TouchableOpacity>
       </View>
 
@@ -264,6 +397,14 @@ export default function MapScreen() {
           onSave={handleSavePlace}
         />
       )}
+
+      {/* Filter Modal */}
+      <MapFilterModal
+        visible={showFilterModal}
+        filters={filters}
+        onClose={() => setShowFilterModal(false)}
+        onApply={handleFiltersChange}
+      />
     </SafeAreaView>
   );
 }
@@ -289,7 +430,6 @@ const styles = StyleSheet.create({
   logoImage: {
     width: 157,
     height: 48,
-    resizeMode: 'contain',
   },
   addButton: {
     width: 32,
@@ -333,5 +473,26 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: theme.colors.border,
     zIndex: 1, // Ensure button is above the map
+  },
+  filterButton: {
+    position: 'relative',
+  },
+  filterBadge: {
+    position: 'absolute',
+    top: -6,
+    right: -6,
+    backgroundColor: theme.colors.primary,
+    borderRadius: 10,
+    minWidth: 20,
+    height: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 4,
+  },
+  filterBadgeText: {
+    ...theme.typography.caption,
+    color: '#FFFFFF',
+    fontWeight: '700',
+    fontSize: 10,
   },
 });

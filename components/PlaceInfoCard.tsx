@@ -41,21 +41,42 @@ export default function PlaceInfoCard({ place, categoryName, imageUri, onPress }
   }, []);
 
   const renderStars = (rating?: number) => {
-    if (!rating) return null;
-    const fullStars = Math.round(rating);
+    // Always show 5 stars, even if unrated (all greyed out)
+    const displayRating = rating && rating > 0 ? rating : 0;
     return (
       <View style={styles.starsContainer}>
-        {[...Array(5)].map((_, i) => (
-          <MaterialCommunityIcons
-            key={i}
-            name={i < fullStars ? 'star' : 'star-outline'}
-            size={12}
-            color={i < fullStars ? '#F5B301' : theme.colors.starEmpty}
-          />
-        ))}
+        {[...Array(5)].map((_, i) => {
+          const starValue = i + 1;
+          const isHalf = displayRating >= starValue - 0.5 && displayRating < starValue;
+          const isFilled = displayRating >= starValue;
+          
+          let iconName: string;
+          if (isFilled) {
+            iconName = 'star';
+          } else if (isHalf) {
+            iconName = 'star-half-full';
+          } else {
+            iconName = 'star-outline';
+          }
+          
+          return (
+            <MaterialCommunityIcons
+              key={i}
+              name={iconName as any}
+              size={12}
+              color={isFilled || isHalf ? '#F5B301' : theme.colors.starEmpty}
+            />
+          );
+        })}
       </View>
     );
   };
+
+  // Get the rating to display (prefer overallRatingManual if set, otherwise overallRating)
+  // overallRatingManual takes precedence because it's explicitly set by the user
+  const displayRating = place.overallRatingManual !== undefined 
+    ? place.overallRatingManual 
+    : (place.overallRating !== undefined && place.overallRating > 0 ? place.overallRating : undefined);
 
   // Get full address for subtitle
   const getSubtitle = () => {
@@ -104,18 +125,12 @@ export default function PlaceInfoCard({ place, categoryName, imageUri, onPress }
               <Text style={styles.subtitle} numberOfLines={1}>{getSubtitle()}</Text>
             )}
             
-            {/* Optional metadata row (category + rating) */}
-            {(categoryName || place.overallRating) && (
-              <View style={styles.metadataRow}>
-                {categoryName && (
-                  <>
-                    <Text style={styles.category}>{categoryName}</Text>
-                    {place.overallRating && <View style={styles.metadataSpacer} />}
-                  </>
-                )}
-                {place.overallRating && renderStars(place.overallRating)}
-              </View>
-            )}
+            {/* Metadata row (category + rating) */}
+            <View style={styles.metadataRow}>
+              <Text style={styles.category}>{categoryName || 'Uncategorized'}</Text>
+              <View style={styles.metadataSpacer} />
+              {renderStars(displayRating)}
+            </View>
           </View>
 
           {/* Right column: Chevron */}

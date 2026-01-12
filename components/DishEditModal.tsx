@@ -15,6 +15,7 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Dish, Category } from '../types';
 import { theme } from '../lib/theme';
 import { getCategoriesByType } from '../lib/db';
+import DraggableStarRating from './DraggableStarRating';
 
 interface DishEditModalProps {
   visible: boolean;
@@ -216,19 +217,13 @@ export default function DishEditModal({ visible, dish, visitId, onSave, onClose 
             <View style={styles.field}>
               <Text style={styles.label}>Rating</Text>
               <View style={styles.ratingContainer}>
-                {[1, 2, 3, 4, 5].map(star => (
-                  <TouchableOpacity
-                    key={star}
-                    onPress={() => setRating(star)}
-                    style={styles.starButton}
-                  >
-                    <MaterialCommunityIcons
-                      name={star <= rating ? 'star' : 'star-outline'}
-                      size={32}
-                      color={star <= rating ? theme.colors.star : theme.colors.starEmpty}
-                    />
-                  </TouchableOpacity>
-                ))}
+                <DraggableStarRating
+                  rating={rating}
+                  onRatingChange={setRating}
+                  size={32}
+                  disabled={false}
+                  showValue={true}
+                />
               </View>
             </View>
 
