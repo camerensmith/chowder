@@ -95,7 +95,8 @@ if (fs.existsSync(manifestFilePath)) {
   try {
     const manifest = JSON.parse(fs.readFileSync(manifestFilePath, 'utf8'));
     const normalizeUrlForBase = (value, fallback = '/') => {
-      const normalized = (value || fallback).startsWith('/') ? (value || fallback) : `/${value || fallback}`;
+      const rawValue = value || fallback;
+      const normalized = rawValue.startsWith('/') ? rawValue : `/${rawValue}`;
       if (BASE_PATH === '/') return normalized;
       return normalized.startsWith(BASE_PATH) ? normalized : withBasePath(normalized);
     };
