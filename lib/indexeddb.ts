@@ -289,6 +289,12 @@ export async function putList(list: List): Promise<void> {
 }
 
 export async function deleteList(listId: string): Promise<void> {
+  // Delete list items first (IndexedDB doesn't support CASCADE DELETE)
+  const listItems = await getListItems(listId);
+  for (const item of listItems) {
+    await deleteListItem(item.id);
+  }
+  // Then delete the list
   await remove(STORES.lists, listId);
 }
 
