@@ -3,12 +3,33 @@
 const fs = require('fs');
 const path = require('path');
 
-const BASE_PATH = '/';
+const normalizeBasePath = (value = '/') => {
+  if (!value || value === '/') return '/';
+  // Normalize any repeated leading/trailing slashes that may come from env input
+  const trimmed = value.trim().replace(/^\/+/, '').replace(/\/+$/, '');
+  return trimmed ? `/${trimmed}` : '/';
+};
+
+const BASE_PATH = normalizeBasePath(process.env.BASE_PATH || '/');
 const distDir = path.join(__dirname, 'dist');
 const indexPath = path.join(distDir, 'index.html');
 const nojekyllPath = path.join(distDir, '.nojekyll');
 const swSourcePath = path.join(__dirname, 'public', 'sw.js');
 const swDestPath = path.join(distDir, 'sw.js');
+
+const withBasePath = (pathname) => {
+  if (!pathname) {
+    return BASE_PATH === '/' ? '/' : BASE_PATH;
+  }
+  const normalizedPath = pathname.startsWith('/') ? pathname : `/${pathname}`;
+  if (BASE_PATH === '/') {
+    return normalizedPath;
+  }
+  if (normalizedPath.startsWith(BASE_PATH)) {
+    return normalizedPath;
+  }
+  return `${BASE_PATH}${normalizedPath}`;
+};
 
 // Copy service worker to dist directory
 if (fs.existsSync(swSourcePath)) {
@@ -22,13 +43,13 @@ if (fs.existsSync(swSourcePath)) {
 let html = fs.readFileSync(indexPath, 'utf8');
 
 // Replace absolute paths with base path (handle root path correctly)
-const expoPath = BASE_PATH === '/' ? '/_expo/' : `${BASE_PATH}/_expo/`;
+const expoPath = withBasePath('/_expo/');
 html = html.replace(/src="\/_expo\//g, `src="${expoPath}`);
 html = html.replace(/href="\/_expo\//g, `href="${expoPath}`);
 
 // Fix manifest.json path if present
-const manifestPath = BASE_PATH === '/' ? '/manifest.json' : `${BASE_PATH}/manifest.json`;
-const manifestWebPath = BASE_PATH === '/' ? '/manifest.webmanifest' : `${BASE_PATH}/manifest.webmanifest`;
+const manifestPath = withBasePath('/manifest.json');
+const manifestWebPath = withBasePath('/manifest.webmanifest');
 html = html.replace(/href="\/manifest\.json"/g, `href="${manifestPath}"`);
 html = html.replace(/href="\/manifest\.webmanifest"/g, `href="${manifestWebPath}"`);
 
@@ -50,8 +71,8 @@ function fixJsFiles(dir) {
       let content = fs.readFileSync(filePath, 'utf8');
       
       // Replace absolute paths to assets and expo (handle root path correctly)
-      const expoPath = BASE_PATH === '/' ? '/_expo/' : `${BASE_PATH}/_expo/`;
-      const assetsPath = BASE_PATH === '/' ? '/assets/' : `${BASE_PATH}/assets/`;
+      const expoPath = withBasePath('/_expo/');
+      const assetsPath = withBasePath('/assets/');
       const modified = content
         .replace(/"\/_expo\//g, `"${expoPath}`)
         .replace(/"\/assets\//g, `"${assetsPath}`);
@@ -73,18 +94,26 @@ const manifestFilePath = path.join(distDir, 'manifest.json');
 if (fs.existsSync(manifestFilePath)) {
   try {
     const manifest = JSON.parse(fs.readFileSync(manifestFilePath, 'utf8'));
-    // Fix start_url and scope if needed (handle root path correctly)
-    if (manifest.start_url && !manifest.start_url.startsWith(BASE_PATH === '/' ? '/' : BASE_PATH)) {
-      manifest.start_url = manifest.start_url === '/' ? '/' : (BASE_PATH === '/' ? manifest.start_url : `${BASE_PATH}${manifest.start_url}`);
+    const normalizeUrlForBase = (value, fallback = '/') => {
+      const rawValue = value || fallback;
+      const normalized = rawValue.startsWith('/') ? rawValue : `/${rawValue}`;
+      if (BASE_PATH === '/') return normalized;
+      return normalized.startsWith(BASE_PATH) ? normalized : withBasePath(normalized);
+    };
+    // Fix start_url and scope to match the deployment base path
+    const updatedStartUrl = normalizeUrlForBase(manifest.start_url);
+    if (manifest.start_url !== updatedStartUrl) {
+      manifest.start_url = updatedStartUrl;
     }
-    if (manifest.scope && !manifest.scope.startsWith(BASE_PATH === '/' ? '/' : BASE_PATH)) {
-      manifest.scope = manifest.scope === '/' ? '/' : (BASE_PATH === '/' ? manifest.scope : `${BASE_PATH}${manifest.scope}`);
+    const updatedScope = normalizeUrlForBase(manifest.scope);
+    if (manifest.scope !== updatedScope) {
+      manifest.scope = updatedScope;
     }
     // Fix icon paths (handle root path correctly)
     if (manifest.icons && Array.isArray(manifest.icons)) {
       manifest.icons = manifest.icons.map((icon) => {
-        if (icon.src && icon.src.startsWith('/') && (BASE_PATH === '/' || !icon.src.startsWith(BASE_PATH))) {
-          icon.src = BASE_PATH === '/' ? icon.src : `${BASE_PATH}${icon.src}`;
+        if (icon.src && icon.src.startsWith('/')) {
+          icon.src = withBasePath(icon.src);
         }
         return icon;
       });
@@ -103,3 +132,4 @@ console.log('✅ Fixed paths in index.html for GitHub Pages deployment');
 console.log(`✅ Fixed paths in ${jsCount} JavaScript files`);
 console.log('✅ Created .nojekyll file');
 console.log('✅ PWA assets configured for GitHub Pages');
+console.log(`✅ Using base path: ${BASE_PATH}`);
