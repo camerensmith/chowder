@@ -124,6 +124,7 @@ export async function signUp(email: string, password: string, displayName: strin
         console.log('Welcome email sent successfully');
       } catch (error) {
         console.warn('Welcome email failed to send:', error);
+        // emailSent remains false
       }
       
       return { user, emailSent };

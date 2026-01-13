@@ -429,7 +429,8 @@ app.post('/api/email/welcome', async (req, res) => {
     await sgMail.send(msg);
     res.json({ success: true, message: 'Welcome email sent' });
   } catch (error) {
-    console.error('Email error:', error);
+    // Log error internally but don't expose details to client
+    console.error('Email sending error:', error);
     res.status(500).json({ success: false, message: 'Failed to send email' });
   }
 });
