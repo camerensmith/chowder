@@ -1274,6 +1274,7 @@ export async function exportBackup(): Promise<BackupData> {
 export async function importBackup(backup: BackupData): Promise<void> {
   if (Platform.OS === 'web') {
     // Clear existing data
+    const allPlaceTags = await indexedDB.getAllPlaceTags();
     const allPlaces = await indexedDB.getAllPlaces();
     const allLists = await indexedDB.getAllLists();
     const allListItems = await indexedDB.getAllListItems();
@@ -1281,31 +1282,32 @@ export async function importBackup(backup: BackupData): Promise<void> {
     const allDishes = await indexedDB.getAllDishes();
     const allCategories = await indexedDB.getAllCategories();
     const allTags = await indexedDB.getAllTags();
-    const allPlaceTags = await indexedDB.getAllPlaceTags();
 
+    // Delete join tables first
+    for (const placeTag of allPlaceTags) {
+      await indexedDB.removeTagFromPlace(placeTag.placeId, placeTag.tagId);
+    }
+    for (const dish of allDishes) {
+      await indexedDB.deleteDish(dish.id);
+    }
+    for (const visit of allVisits) {
+      await indexedDB.deleteVisit(visit.id);
+    }
+    for (const item of allListItems) {
+      await indexedDB.deleteListItem(item.id);
+    }
+    // Delete entities
     for (const place of allPlaces) {
       await indexedDB.deletePlace(place.id);
     }
     for (const list of allLists) {
       await indexedDB.deleteList(list.id);
     }
-    for (const item of allListItems) {
-      await indexedDB.deleteListItem(item.id);
-    }
-    for (const visit of allVisits) {
-      await indexedDB.deleteVisit(visit.id);
-    }
-    for (const dish of allDishes) {
-      await indexedDB.deleteDish(dish.id);
-    }
     for (const category of allCategories) {
       await indexedDB.deleteCategory(category.id);
     }
     for (const tag of allTags) {
       await indexedDB.deleteTag(tag.id);
-    }
-    for (const placeTag of allPlaceTags) {
-      await indexedDB.removeTagFromPlace(placeTag.placeId, placeTag.tagId);
     }
 
     // Import new data
