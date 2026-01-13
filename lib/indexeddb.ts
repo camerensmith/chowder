@@ -261,7 +261,7 @@ export async function putAuthor(author: Author): Promise<void> {
 export async function deleteAuthor(): Promise<void> {
   const authors = await getAll<Author>(STORES.author);
   for (const author of authors) {
-    await del(STORES.author, author.id);
+    await remove(STORES.author, author.id);
   }
 }
 
