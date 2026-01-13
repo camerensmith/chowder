@@ -3,6 +3,7 @@
 
 import { Platform } from 'react-native';
 import * as api from './api';
+import { deleteAuthor } from './db';
 
 // AsyncStorage import - will be null on web
 let AsyncStorage: any = null;
@@ -218,6 +219,7 @@ export async function signIn(email: string, password: string): Promise<User> {
 // Sign out current user
 export async function signOut(): Promise<void> {
   await removeAuthToken();
+  await deleteAuthor();
 }
 
 // Get current authenticated user
