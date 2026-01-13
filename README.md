@@ -64,9 +64,24 @@ The app works in two modes:
   - JWT token-based authentication
 
 **Email Functionality:**
-- Email sending (e.g., welcome emails, password reset) must be implemented on the backend server
-- The frontend app does not send emails directly
-- Backend would need email service integration (SendGrid, AWS SES, etc.)
+- Email sending (e.g., welcome emails) is implemented in the frontend but requires a backend server
+- The frontend calls `POST /api/email/welcome` with `{ email, displayName }` when a user signs up
+- Backend must implement this endpoint with email service integration (SendGrid, AWS SES, etc.)
+- If the backend is unavailable or email sending fails, user signup still succeeds (offline-first design)
+- When email is successfully sent, users receive a confirmation message
+
+**Backend Email Endpoint Requirements:**
+```
+POST /api/email/welcome
+Body: { email: string, displayName: string }
+Response: 200 OK (or appropriate status code)
+
+Example response:
+{
+  "success": true,
+  "message": "Welcome email sent"
+}
+```
 
 ## Project Structure
 

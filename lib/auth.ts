@@ -98,7 +98,7 @@ async function setStoredUser(user: User): Promise<void> {
 }
 
 // Sign up new user
-export async function signUp(email: string, password: string, displayName: string): Promise<User> {
+export async function signUp(email: string, password: string, displayName: string): Promise<{ user: User; emailSent: boolean }> {
   try {
     // Check if backend is available
     const apiUrl = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:3000';
@@ -117,11 +117,16 @@ export async function signUp(email: string, password: string, displayName: strin
       await setStoredUser(user);
       
       // Send welcome email (non-blocking - don't fail signup if email fails)
-      api.sendWelcomeEmail(email, displayName).catch((error) => {
+      let emailSent = false;
+      try {
+        await api.sendWelcomeEmail(email, displayName);
+        emailSent = true;
+        console.log('Welcome email sent successfully');
+      } catch (error) {
         console.warn('Welcome email failed to send:', error);
-      });
+      }
       
-      return user;
+      return { user, emailSent };
     } else {
       // Offline mode: create user locally without backend
       const user: User = {
@@ -133,7 +138,7 @@ export async function signUp(email: string, password: string, displayName: strin
       
       // Store user locally (no token needed for offline mode)
       await setStoredUser(user);
-      return user;
+      return { user, emailSent: false };
     }
   } catch (error: any) {
     // If backend fails, fall back to offline mode
@@ -146,7 +151,7 @@ export async function signUp(email: string, password: string, displayName: strin
         avatarUri: undefined,
       };
       await setStoredUser(user);
-      return user;
+      return { user, emailSent: false };
     }
     throw new Error(error.message || 'Failed to sign up');
   }
