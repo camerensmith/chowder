@@ -207,6 +207,9 @@ export default function MapScreen() {
       tagIds: [],
       listIds: [],
       ratingFilterType: 'none',
+      minRating: undefined,
+      maxRating: undefined,
+      exactRating: undefined,
       searchText: undefined,
     };
     setFilters(clearedFilters);
