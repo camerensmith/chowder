@@ -635,12 +635,8 @@ export async function markListAsSynced(listId: string, apiId: string, lastSynced
 
 export async function deleteList(listId: string): Promise<void> {
   if (Platform.OS === 'web') {
+    // deleteList in indexedDB now handles cascade deletion of list items
     await indexedDB.deleteList(listId);
-    // Also remove list items
-    const listItems = await indexedDB.getAllListItems();
-    for (const item of listItems.filter(li => li.listId === listId)) {
-      await indexedDB.deleteListItem(item.id);
-    }
     return;
   }
 
