@@ -3,7 +3,7 @@ import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
-import { View, ActivityIndicator } from 'react-native';
+import { View, ActivityIndicator, Platform } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { theme } from './lib/theme';
 import { initializeDatabase, getAuthor } from './lib/db';
@@ -37,6 +37,8 @@ function TabNavigator() {
           borderTopColor: theme.colors.border,
           borderTopWidth: 1,
           backgroundColor: theme.colors.background,
+          paddingBottom: Platform.OS === 'web' ? theme.spacing.lg : 0,
+          height: Platform.OS === 'web' ? 65 : undefined,
         },
       }}
     >
