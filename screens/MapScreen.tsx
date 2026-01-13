@@ -211,7 +211,19 @@ export default function MapScreen() {
         coords.longitude,
         address
       );
-      await loadPlaces();
+      // Clear filters to ensure the new place is visible on the map
+      const clearedFilters: MapFilters = {
+        categoryIds: [],
+        tagIds: [],
+        listIds: [],
+        ratingFilterType: 'none',
+        searchText: undefined,
+      };
+      setFilters(clearedFilters);
+      // Reload places and apply cleared filters
+      const loadedPlaces = await getAllPlaces();
+      setAllPlaces(loadedPlaces);
+      applyFilters(loadedPlaces, clearedFilters);
       setShowSearchModal(false);
       setSearchQuery('');
     } catch (error) {
@@ -236,7 +248,19 @@ export default function MapScreen() {
         clickedLocation.longitude,
         address
       );
-      await loadPlaces();
+      // Clear filters to ensure the new place is visible on the map
+      const clearedFilters: MapFilters = {
+        categoryIds: [],
+        tagIds: [],
+        listIds: [],
+        ratingFilterType: 'none',
+        searchText: undefined,
+      };
+      setFilters(clearedFilters);
+      // Reload places and apply cleared filters
+      const loadedPlaces = await getAllPlaces();
+      setAllPlaces(loadedPlaces);
+      applyFilters(loadedPlaces, clearedFilters);
       setShowSaveModal(false);
       setClickedLocation(null);
     } catch (error) {
