@@ -24,6 +24,17 @@ import MapFilterModal, { MapFilters } from '../components/MapFilterModal';
 
 type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
 
+const DEFAULT_FILTERS: MapFilters = {
+  categoryIds: [],
+  tagIds: [],
+  listIds: [],
+  ratingFilterType: 'none',
+  minRating: undefined,
+  maxRating: undefined,
+  exactRating: undefined,
+  searchText: undefined,
+};
+
 export default function MapScreen() {
   const navigation = useNavigation<NavigationProp>();
   const insets = useSafeAreaInsets();
@@ -38,13 +49,7 @@ export default function MapScreen() {
   const [selectedPlaceCategory, setSelectedPlaceCategory] = useState<string | undefined>(undefined);
   const [selectedPlaceImage, setSelectedPlaceImage] = useState<string | undefined>(undefined);
   const [showFilterModal, setShowFilterModal] = useState(false);
-  const [filters, setFilters] = useState<MapFilters>({
-    categoryIds: [],
-    tagIds: [],
-    listIds: [],
-    ratingFilterType: 'none',
-    searchText: undefined,
-  });
+  const [filters, setFilters] = useState<MapFilters>(DEFAULT_FILTERS);
   const [allPlaces, setAllPlaces] = useState<Place[]>([]);
   const [filteredPlaces, setFilteredPlaces] = useState<Place[]>([]);
   
@@ -201,6 +206,13 @@ export default function MapScreen() {
     applyFilters(allPlaces, newFilters);
   };
 
+  const clearFiltersAndReloadPlaces = async () => {
+    setFilters(DEFAULT_FILTERS);
+    const loadedPlaces = await getAllPlaces();
+    setAllPlaces(loadedPlaces);
+    applyFilters(loadedPlaces, DEFAULT_FILTERS);
+  };
+
   const handleSearchSelect = async (result: NominatimResult) => {
     try {
       const coords = extractCoordinates(result);
@@ -211,7 +223,8 @@ export default function MapScreen() {
         coords.longitude,
         address
       );
-      await loadPlaces();
+      // Clear filters to ensure the new place is visible on the map
+      await clearFiltersAndReloadPlaces();
       setShowSearchModal(false);
       setSearchQuery('');
     } catch (error) {
@@ -236,7 +249,8 @@ export default function MapScreen() {
         clickedLocation.longitude,
         address
       );
-      await loadPlaces();
+      // Clear filters to ensure the new place is visible on the map
+      await clearFiltersAndReloadPlaces();
       setShowSaveModal(false);
       setClickedLocation(null);
     } catch (error) {
