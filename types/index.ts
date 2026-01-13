@@ -104,6 +104,11 @@ export interface Tag {
   createdAt: number;
 }
 
+export interface PlaceTag {
+  placeId: string;
+  tagId: string;
+}
+
 // Share payload types
 export interface SharePayload {
   type: 'list' | 'map';
