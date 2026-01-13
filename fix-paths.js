@@ -5,6 +5,7 @@ const path = require('path');
 
 const normalizeBasePath = (value = '/') => {
   if (!value || value === '/') return '/';
+  // Normalize any repeated leading/trailing slashes that may come from env input
   const trimmed = value.trim().replace(/^\/+|\/+$/, '');
   return trimmed ? `/${trimmed}` : '/';
 };
@@ -17,6 +18,9 @@ const swSourcePath = path.join(__dirname, 'public', 'sw.js');
 const swDestPath = path.join(distDir, 'sw.js');
 
 const withBasePath = (pathname) => {
+  if (!pathname) {
+    return BASE_PATH === '/' ? '/' : BASE_PATH;
+  }
   const normalizedPath = pathname.startsWith('/') ? pathname : `/${pathname}`;
   if (BASE_PATH === '/') {
     return normalizedPath;
