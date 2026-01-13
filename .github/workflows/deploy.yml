@@ -8,13 +8,21 @@ on:
       - master
 
 permissions:
-  contents: read
+  contents: write
   pages: write
   id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
     
     steps:
       - name: Checkout repository
@@ -34,6 +42,15 @@ jobs:
       
       - name: Fix paths for GitHub Pages
         run: node fix-paths.js
+      
+      - name: Verify build output
+        run: |
+          if [ ! -d "./dist" ]; then
+            echo "Error: dist directory not found"
+            exit 1
+          fi
+          echo "Build output verified:"
+          ls -la ./dist
       
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
