@@ -258,6 +258,13 @@ export async function putAuthor(author: Author): Promise<void> {
   await put(STORES.author, author);
 }
 
+export async function deleteAuthor(): Promise<void> {
+  const authors = await getAll<Author>(STORES.author);
+  for (const author of authors) {
+    await del(STORES.author, author.id);
+  }
+}
+
 // Place operations
 export async function getPlace(placeId: string): Promise<Place | null> {
   return get<Place>(STORES.places, placeId);
