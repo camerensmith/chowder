@@ -2,7 +2,7 @@
 // Supports SQLite (native) and IndexedDB (web) with sync capabilities
 
 import { Platform } from 'react-native';
-import { Author, Place, List, ListItem, Visit, Dish, Category, Tag } from '../types';
+import { Author, Place, List, ListItem, Visit, Dish, Category, Tag, PlaceTag } from '../types';
 import * as indexedDB from './indexeddb';
 
 // Helper function to safely access localStorage (web only)
@@ -1092,6 +1092,14 @@ async function getPlaceTags(placeId: string): Promise<string[]> {
   return results.map((r: { tagId: string }) => r.tagId);
 }
 
+async function getAllPlaceTags(): Promise<PlaceTag[]> {
+  if (Platform.OS === 'web') {
+    return indexedDB.getAllPlaceTags();
+  }
+  if (!db) throw new Error('Database not initialized');
+  return (await db.getAllAsync('SELECT placeId, tagId FROM place_tags')) as PlaceTag[];
+}
+
 // ===== DISH QUERIES =====
 
 export async function createDish(visitId: string, name: string, rating: number, categoryId?: string, notes?: string, photoUri?: string): Promise<Dish> {
@@ -1232,6 +1240,7 @@ export interface BackupData {
   dishes: Dish[];
   categories: Category[];
   tags: Tag[];
+  placeTags: PlaceTag[];
 }
 
 // Export all data as JSON backup
@@ -1244,6 +1253,7 @@ export async function exportBackup(): Promise<BackupData> {
   const dishes = await getAllDishes();
   const categories = await getAllCategories();
   const tags = await getAllTags();
+  const placeTags = await getAllPlaceTags();
 
   return {
     version: '1.0',
@@ -1256,6 +1266,7 @@ export async function exportBackup(): Promise<BackupData> {
     dishes,
     categories,
     tags,
+    placeTags,
   };
 }
 
@@ -1270,6 +1281,7 @@ export async function importBackup(backup: BackupData): Promise<void> {
     const allDishes = await indexedDB.getAllDishes();
     const allCategories = await indexedDB.getAllCategories();
     const allTags = await indexedDB.getAllTags();
+    const allPlaceTags = await indexedDB.getAllPlaceTags();
 
     for (const place of allPlaces) {
       await indexedDB.deletePlace(place.id);
@@ -1291,6 +1303,9 @@ export async function importBackup(backup: BackupData): Promise<void> {
     }
     for (const tag of allTags) {
       await indexedDB.deleteTag(tag.id);
+    }
+    for (const placeTag of allPlaceTags) {
+      await indexedDB.removeTagFromPlace(placeTag.placeId, placeTag.tagId);
     }
 
     // Import new data
@@ -1318,12 +1333,19 @@ export async function importBackup(backup: BackupData): Promise<void> {
     for (const tag of backup.tags) {
       await indexedDB.putTag(tag);
     }
+    // Restore place-tag relationships
+    if (backup.placeTags) {
+      for (const placeTag of backup.placeTags) {
+        await indexedDB.addTagToPlace(placeTag.placeId, placeTag.tagId);
+      }
+    }
     return;
   }
 
   if (!db) throw new Error('Database not initialized');
 
   // Clear existing data
+  await db.execAsync('DELETE FROM place_tags');
   await db.execAsync('DELETE FROM dishes');
   await db.execAsync('DELETE FROM visits');
   await db.execAsync('DELETE FROM list_items');
@@ -1467,5 +1489,15 @@ export async function importBackup(backup: BackupData): Promise<void> {
         tag.createdAt,
       ]
     );
+  }
+
+  // Restore place-tag relationships
+  if (backup.placeTags) {
+    for (const placeTag of backup.placeTags) {
+      await db.runAsync(
+        'INSERT INTO place_tags (placeId, tagId) VALUES (?, ?)',
+        [placeTag.placeId, placeTag.tagId]
+      );
+    }
   }
 }

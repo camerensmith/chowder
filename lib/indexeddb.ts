@@ -395,6 +395,10 @@ export async function getPlaceTags(placeId: string): Promise<string[]> {
   return placeTags.map(pt => pt.tagId);
 }
 
+export async function getAllPlaceTags(): Promise<{ placeId: string; tagId: string }[]> {
+  return await getAll<{ placeId: string; tagId: string }>(STORES.placeTags);
+}
+
 export async function addTagToPlace(placeId: string, tagId: string): Promise<void> {
   const database = await openDatabase();
   return new Promise((resolve, reject) => {
