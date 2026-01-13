@@ -5,7 +5,7 @@ const path = require('path');
 
 const normalizeBasePath = (value = '/') => {
   if (!value || value === '/') return '/';
-  const trimmed = value.trim().replace(/^\/+|\/+$/g, '');
+  const trimmed = value.trim().replace(/^\/+|\/+$/, '');
   return trimmed ? `/${trimmed}` : '/';
 };
 
@@ -95,12 +95,10 @@ if (fs.existsSync(manifestFilePath)) {
     manifest.scope = withBasePath('/');
     // Fix icon paths (handle root path correctly)
     if (manifest.icons && Array.isArray(manifest.icons)) {
-      const prefixIconSrc = (src) => {
-        if (!src || !src.startsWith('/')) return src;
-        return withBasePath(src);
-      };
       manifest.icons = manifest.icons.map((icon) => {
-        icon.src = prefixIconSrc(icon.src);
+        if (icon.src && icon.src.startsWith('/')) {
+          icon.src = withBasePath(icon.src);
+        }
         return icon;
       });
     }
