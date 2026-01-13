@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tab Bar Comparison - Before & After</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 20px;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: #f0f0f0;
+    }
+    .container {
+      display: flex;
+      gap: 40px;
+      justify-content: center;
+      flex-wrap: wrap;
+    }
+    .demo {
+      background: white;
+      border-radius: 12px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+      overflow: hidden;
+      width: 375px;
+    }
+    .title {
+      padding: 16px;
+      text-align: center;
+      font-weight: 600;
+      font-size: 18px;
+      background: #f8f8f8;
+      border-bottom: 1px solid #e0e0e0;
+    }
+    .phone-frame {
+      position: relative;
+      height: 667px;
+      background: #F8F3F5;
+      display: flex;
+      flex-direction: column;
+    }
+    .content {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #666;
+      font-size: 16px;
+    }
+    .tab-bar {
+      border-top: 1px solid #E0E0E0;
+      background: #F8F3F5;
+      display: flex;
+      justify-content: space-around;
+      align-items: center;
+    }
+    .tab-bar.before {
+      height: 49px;
+      padding-bottom: 0;
+    }
+    .tab-bar.after {
+      height: 65px;
+      padding-bottom: 16px;
+    }
+    .tab-item {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 4px;
+      padding: 8px 16px;
+      color: #666;
+    }
+    .tab-item.active {
+      color: #DC143C;
+    }
+    .icon {
+      width: 24px;
+      height: 24px;
+      border-radius: 4px;
+      background: currentColor;
+      opacity: 0.8;
+    }
+    .label {
+      font-size: 12px;
+      font-weight: 500;
+    }
+    .highlight {
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      height: 20px;
+      background: rgba(255, 0, 0, 0.1);
+      border-top: 2px dashed red;
+      pointer-events: none;
+    }
+    .annotation {
+      position: absolute;
+      bottom: 25px;
+      left: 10px;
+      background: rgba(255, 0, 0, 0.9);
+      color: white;
+      padding: 4px 8px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: 600;
+      z-index: 10;
+    }
+    .spacing-indicator {
+      position: absolute;
+      bottom: 0;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(0, 128, 0, 0.9);
+      color: white;
+      padding: 4px 8px;
+      border-radius: 4px 4px 0 0;
+      font-size: 11px;
+      font-weight: 600;
+      z-index: 10;
+    }
+  </style>
+</head>
+<body>
+  <h1 style="text-align: center; margin-bottom: 32px;">PWA Tab Bar Spacing Fix</h1>
+  
+  <div class="container">
+    <!-- Before -->
+    <div class="demo">
+      <div class="title">❌ Before (Too Close)</div>
+      <div class="phone-frame">
+        <div class="content">App Content Area</div>
+        <div class="tab-bar before">
+          <div class="tab-item active">
+            <div class="icon"></div>
+            <div class="label">Lists</div>
+          </div>
+          <div class="tab-item">
+            <div class="icon"></div>
+            <div class="label">Map</div>
+          </div>
+          <div class="tab-item">
+            <div class="icon"></div>
+            <div class="label">Settings</div>
+          </div>
+        </div>
+        <div class="highlight"></div>
+        <div class="annotation">Too close to edge!</div>
+      </div>
+    </div>
+    
+    <!-- After -->
+    <div class="demo">
+      <div class="title">✅ After (Fixed)</div>
+      <div class="phone-frame">
+        <div class="content">App Content Area</div>
+        <div class="tab-bar after">
+          <div class="tab-item active">
+            <div class="icon"></div>
+            <div class="label">Lists</div>
+          </div>
+          <div class="tab-item">
+            <div class="icon"></div>
+            <div class="label">Map</div>
+          </div>
+          <div class="tab-item">
+            <div class="icon"></div>
+            <div class="label">Settings</div>
+          </div>
+        </div>
+        <div class="spacing-indicator">+16px padding</div>
+      </div>
+    </div>
+  </div>
+
+  <div style="text-align: center; margin-top: 32px; max-width: 800px; margin-left: auto; margin-right: auto;">
+    <h3>Changes Made:</h3>
+    <ul style="text-align: left; line-height: 1.8;">
+      <li><strong>Platform-specific styling:</strong> Added <code>paddingBottom: 16px</code> only for web/PWA</li>
+      <li><strong>Adjusted height:</strong> Set <code>height: 65px</code> for web to accommodate the padding</li>
+      <li><strong>Mobile unchanged:</strong> iOS and Android keep original behavior (no extra padding)</li>
+      <li><strong>Visual improvement:</strong> Tab buttons now have proper spacing from the bottom edge in PWA</li>
+    </ul>
+  </div>
+</body>
+</html>
