@@ -1,6 +1,6 @@
 name: Deploy to GitHub Pages
 
-# Trigger deployment to GitHub Pages
+# Trigger deployment to GitHub Pages with updated permissions
 on:
   push:
     branches:
