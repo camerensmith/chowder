@@ -164,7 +164,7 @@ export default function MapView({ places, onPlacePress, onPlaceSelect, onMapClic
       markersRef.current = [];
       tileLayerRef.current = null;
     };
-  }, [places, initialCenter, initialZoom, onMapClick]);
+  }, [initialCenter, initialZoom, onMapClick]);
 
   // Update tile layer when provider changes
   useEffect(() => {
