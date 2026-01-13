@@ -24,6 +24,17 @@ import MapFilterModal, { MapFilters } from '../components/MapFilterModal';
 
 type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
 
+const DEFAULT_FILTERS: MapFilters = {
+  categoryIds: [],
+  tagIds: [],
+  listIds: [],
+  ratingFilterType: 'none',
+  minRating: undefined,
+  maxRating: undefined,
+  exactRating: undefined,
+  searchText: undefined,
+};
+
 export default function MapScreen() {
   const navigation = useNavigation<NavigationProp>();
   const insets = useSafeAreaInsets();
@@ -38,13 +49,7 @@ export default function MapScreen() {
   const [selectedPlaceCategory, setSelectedPlaceCategory] = useState<string | undefined>(undefined);
   const [selectedPlaceImage, setSelectedPlaceImage] = useState<string | undefined>(undefined);
   const [showFilterModal, setShowFilterModal] = useState(false);
-  const [filters, setFilters] = useState<MapFilters>({
-    categoryIds: [],
-    tagIds: [],
-    listIds: [],
-    ratingFilterType: 'none',
-    searchText: undefined,
-  });
+  const [filters, setFilters] = useState<MapFilters>(DEFAULT_FILTERS);
   const [allPlaces, setAllPlaces] = useState<Place[]>([]);
   const [filteredPlaces, setFilteredPlaces] = useState<Place[]>([]);
   
@@ -202,20 +207,10 @@ export default function MapScreen() {
   };
 
   const clearFiltersAndReloadPlaces = async () => {
-    const clearedFilters: MapFilters = {
-      categoryIds: [],
-      tagIds: [],
-      listIds: [],
-      ratingFilterType: 'none',
-      minRating: undefined,
-      maxRating: undefined,
-      exactRating: undefined,
-      searchText: undefined,
-    };
-    setFilters(clearedFilters);
+    setFilters(DEFAULT_FILTERS);
     const loadedPlaces = await getAllPlaces();
     setAllPlaces(loadedPlaces);
-    applyFilters(loadedPlaces, clearedFilters);
+    applyFilters(loadedPlaces, DEFAULT_FILTERS);
   };
 
   const handleSearchSelect = async (result: NominatimResult) => {
