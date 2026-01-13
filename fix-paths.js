@@ -6,7 +6,7 @@ const path = require('path');
 const normalizeBasePath = (value = '/') => {
   if (!value || value === '/') return '/';
   const trimmed = value.trim().replace(/^\/+|\/+$/g, '');
-  return `/${trimmed}`;
+  return trimmed ? `/${trimmed}` : '/';
 };
 
 const BASE_PATH = normalizeBasePath(process.env.BASE_PATH || '/');
@@ -17,16 +17,14 @@ const swSourcePath = path.join(__dirname, 'public', 'sw.js');
 const swDestPath = path.join(distDir, 'sw.js');
 
 const withBasePath = (pathname) => {
-  if (!pathname.startsWith('/')) {
-    pathname = `/${pathname}`;
-  }
+  const normalizedPath = pathname.startsWith('/') ? pathname : `/${pathname}`;
   if (BASE_PATH === '/') {
-    return pathname;
+    return normalizedPath;
   }
-  if (pathname.startsWith(BASE_PATH)) {
-    return pathname;
+  if (normalizedPath.startsWith(BASE_PATH)) {
+    return normalizedPath;
   }
-  return `${BASE_PATH}${pathname}`;
+  return `${BASE_PATH}${normalizedPath}`;
 };
 
 // Copy service worker to dist directory
