@@ -201,6 +201,20 @@ export default function MapScreen() {
     applyFilters(allPlaces, newFilters);
   };
 
+  const clearFiltersAndReloadPlaces = async () => {
+    const clearedFilters: MapFilters = {
+      categoryIds: [],
+      tagIds: [],
+      listIds: [],
+      ratingFilterType: 'none',
+      searchText: undefined,
+    };
+    setFilters(clearedFilters);
+    const loadedPlaces = await getAllPlaces();
+    setAllPlaces(loadedPlaces);
+    applyFilters(loadedPlaces, clearedFilters);
+  };
+
   const handleSearchSelect = async (result: NominatimResult) => {
     try {
       const coords = extractCoordinates(result);
@@ -212,18 +226,7 @@ export default function MapScreen() {
         address
       );
       // Clear filters to ensure the new place is visible on the map
-      const clearedFilters: MapFilters = {
-        categoryIds: [],
-        tagIds: [],
-        listIds: [],
-        ratingFilterType: 'none',
-        searchText: undefined,
-      };
-      setFilters(clearedFilters);
-      // Reload places and apply cleared filters
-      const loadedPlaces = await getAllPlaces();
-      setAllPlaces(loadedPlaces);
-      applyFilters(loadedPlaces, clearedFilters);
+      await clearFiltersAndReloadPlaces();
       setShowSearchModal(false);
       setSearchQuery('');
     } catch (error) {
@@ -249,18 +252,7 @@ export default function MapScreen() {
         address
       );
       // Clear filters to ensure the new place is visible on the map
-      const clearedFilters: MapFilters = {
-        categoryIds: [],
-        tagIds: [],
-        listIds: [],
-        ratingFilterType: 'none',
-        searchText: undefined,
-      };
-      setFilters(clearedFilters);
-      // Reload places and apply cleared filters
-      const loadedPlaces = await getAllPlaces();
-      setAllPlaces(loadedPlaces);
-      applyFilters(loadedPlaces, clearedFilters);
+      await clearFiltersAndReloadPlaces();
       setShowSaveModal(false);
       setClickedLocation(null);
     } catch (error) {
