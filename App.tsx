@@ -7,10 +7,12 @@ import { View, ActivityIndicator } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { theme } from './lib/theme';
 import { initializeDatabase, getAuthor } from './lib/db';
+import { registerServiceWorker } from './lib/pwa';
 import { RootStackParamList, MainTabParamList } from './types';
 
 // Screens
 import CreateAccountScreen from './screens/CreateAccountScreen';
+import LoginScreen from './screens/LoginScreen';
 import ListsScreen from './screens/ListsScreen';
 import MapScreen from './screens/MapScreen';
 import SettingsScreen from './screens/SettingsScreen';
@@ -18,6 +20,7 @@ import ListDetailScreen from './screens/ListDetailScreen';
 import PlaceDetailScreen from './screens/PlaceDetailScreen';
 import ShareViewerScreen from './screens/ShareViewerScreen';
 import CategoryManagementScreen from './screens/CategoryManagementScreen';
+import TileProviderScreen from './screens/TileProviderScreen';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 const Tab = createBottomTabNavigator<MainTabParamList>();
@@ -72,20 +75,23 @@ function TabNavigator() {
 }
 
 function RootNavigator({ needsAccount }: { needsAccount: boolean }) {
+  const initialRoute: keyof RootStackParamList = needsAccount ? 'CreateAccount' : 'Main';
+  
   return (
     <Stack.Navigator
-      id="RootStack"
       screenOptions={{
         headerShown: false,
       }}
-      initialRouteName={needsAccount ? 'CreateAccount' : 'Main'}
+      initialRouteName={initialRoute}
     >
+      <Stack.Screen name="Login" component={LoginScreen} />
       <Stack.Screen name="CreateAccount" component={CreateAccountScreen} />
       <Stack.Screen name="Main" component={TabNavigator} />
       <Stack.Screen name="ListDetail" component={ListDetailScreen} />
       <Stack.Screen name="PlaceDetail" component={PlaceDetailScreen} />
       <Stack.Screen name="ShareViewer" component={ShareViewerScreen} />
       <Stack.Screen name="CategoryManagement" component={CategoryManagementScreen} />
+      <Stack.Screen name="TileProvider" component={TileProviderScreen} />
     </Stack.Navigator>
   );
 }
@@ -95,18 +101,20 @@ export default function App() {
   const [needsAccount, setNeedsAccount] = useState(false);
 
   useEffect(() => {
-    async function init() {
+    // Register service worker for PWA functionality
+    registerServiceWorker();
+
+    (async () => {
       try {
         await initializeDatabase();
         const author = await getAuthor();
         setNeedsAccount(!author);
         setIsReady(true);
-      } catch (error) {
+      } catch (error: unknown) {
         console.error('Failed to initialize:', error);
         setIsReady(true);
       }
-    }
-    init();
+    })();
   }, []);
 
   if (!isReady) {
@@ -125,3 +133,4 @@ export default function App() {
     </SafeAreaProvider>
   );
 }
+

@@ -29,16 +29,44 @@ A personal food and restaurant tracking app with a map-centric UI. Track your fa
 npm install
 ```
 
-2. Start the development server:
+2. (Optional) Configure backend API URL:
+   - Create a `.env` file in the root directory
+   - Add: `EXPO_PUBLIC_API_URL=https://your-api-url.com`
+   - If not set, the app will work in offline mode (no backend required)
+
+3. Start the development server:
 ```bash
 npm start
 ```
 
-3. Open the app:
+4. Open the app:
    - Press `w` to open in web browser
    - Press `a` to open in Android emulator
    - Press `i` to open in iOS simulator
    - Scan QR code with Expo Go app on your device
+
+### Backend Configuration
+
+The app works in two modes:
+
+**Offline Mode (Default):**
+- No backend server required
+- All data stored locally
+- Sign up/sign in works without API
+- Perfect for personal use
+
+**Backend Mode:**
+- Set `EXPO_PUBLIC_API_URL` environment variable
+- Backend should provide:
+  - `POST /api/auth/signup` - User registration
+  - `POST /api/auth/login` - User authentication
+  - `GET /api/health` - Health check endpoint
+  - JWT token-based authentication
+
+**Email Functionality:**
+- Email sending (e.g., welcome emails, password reset) must be implemented on the backend server
+- The frontend app does not send emails directly
+- Backend would need email service integration (SendGrid, AWS SES, etc.)
 
 ## Project Structure
 

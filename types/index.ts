@@ -138,6 +138,7 @@ export type RootStackParamList = {
   PlaceDetail: { placeId: string };
   ShareViewer: { code?: string };
   CategoryManagement: undefined;
+  TileProvider: undefined;
 };
 
 export type MainTabParamList = {

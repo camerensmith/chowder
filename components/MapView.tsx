@@ -1,6 +1,7 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { View, Text, StyleSheet, Platform } from 'react-native';
 import { Place } from '../types';
+import { getTileProviderPreference, getTileProvider } from '../lib/tileProviders';
 
 // Conditional import for native maps - try expo-maps first (works in Expo Go), then react-native-maps
 let MapViewNative: any = null;
@@ -53,9 +54,40 @@ interface MapViewProps {
 export default function MapView({ places, onPlacePress, onPlaceSelect, onMapClick, selectedPlaceId, initialCenter, initialZoom = 13, center, zoom }: MapViewProps) {
   const mapRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<any>(null);
+  const tileLayerRef = useRef<any>(null);
   const markersRef = useRef<any[]>([]);
   const selectedMarkerRef = useRef<any>(null);
   const nativeMapRef = useRef<any>(null);
+  const [tileProviderId, setTileProviderId] = useState<string>('osm');
+
+  // Load tile provider preference and listen for changes
+  useEffect(() => {
+    if (Platform.OS === 'web') {
+      getTileProviderPreference().then(id => setTileProviderId(id));
+      
+      // Listen for storage changes (when user changes provider in settings)
+      const handleStorageChange = (e: StorageEvent) => {
+        if (e.key === 'chowder_tile_provider' && e.newValue) {
+          setTileProviderId(e.newValue);
+        }
+      };
+      
+      window.addEventListener('storage', handleStorageChange);
+      
+      // Also check periodically (for same-tab changes)
+      const interval = setInterval(async () => {
+        const currentId = await getTileProviderPreference();
+        if (currentId !== tileProviderId) {
+          setTileProviderId(currentId);
+        }
+      }, 1000);
+      
+      return () => {
+        window.removeEventListener('storage', handleStorageChange);
+        clearInterval(interval);
+      };
+    }
+  }, [tileProviderId]);
 
   // Initialize map (only once)
   useEffect(() => {
@@ -96,11 +128,15 @@ export default function MapView({ places, onPlacePress, onPlaceSelect, onMapClic
       const map = L.default.map(mapRef.current).setView([center.lat, center.lng], initialZoom);
       mapInstanceRef.current = map;
 
-      // Add OpenStreetMap tiles
-      L.default.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        attribution: '© OpenStreetMap contributors',
-        maxZoom: 19,
-      }).addTo(map);
+      // Load tile provider and add tiles
+      const providerId = await getTileProviderPreference();
+      const provider = getTileProvider(providerId);
+      const tileLayer = L.default.tileLayer(provider.url, {
+        attribution: provider.attribution,
+        maxZoom: provider.maxZoom || 19,
+      });
+      tileLayer.addTo(map);
+      tileLayerRef.current = tileLayer;
 
       // Handle map clicks for placing new pins
       if (onMapClick) {
@@ -126,8 +162,34 @@ export default function MapView({ places, onPlacePress, onPlaceSelect, onMapClic
         delete (mapRef.current as any)._leaflet_id;
       }
       markersRef.current = [];
+      tileLayerRef.current = null;
     };
-  }, []); // Only run once on mount
+  }, [places, initialCenter, initialZoom, onMapClick]);
+
+  // Update tile layer when provider changes
+  useEffect(() => {
+    if (Platform.OS !== 'web' || !mapInstanceRef.current || !tileLayerRef.current) return;
+
+    const updateTiles = async () => {
+      const L = await import('leaflet');
+      const provider = getTileProvider(tileProviderId);
+      
+      // Remove old tile layer
+      if (tileLayerRef.current) {
+        mapInstanceRef.current.removeLayer(tileLayerRef.current);
+      }
+      
+      // Add new tile layer
+      const newTileLayer = L.default.tileLayer(provider.url, {
+        attribution: provider.attribution,
+        maxZoom: provider.maxZoom || 19,
+      });
+      newTileLayer.addTo(mapInstanceRef.current);
+      tileLayerRef.current = newTileLayer;
+    };
+
+    updateTiles().catch(console.error);
+  }, [tileProviderId]);
 
   // Update markers whenever places change (separate effect)
   useEffect(() => {

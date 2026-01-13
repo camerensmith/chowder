@@ -37,7 +37,7 @@
       "name": "Chowder",
       "shortName": "Chowder",
       "lang": "en",
-      "scope": "/chowder/",
+      "scope": "/",
       "themeColor": "#9C321B",
       "backgroundColor": "#F8F3F5",
       "display": "standalone",

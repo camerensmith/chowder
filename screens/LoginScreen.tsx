@@ -9,67 +9,37 @@ import {
   Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { MaterialCommunityIcons } from '@expo/vector-icons';
-import * as ImagePicker from 'expo-image-picker';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../types';
 import { theme } from '../lib/theme';
-import { signUp } from '../lib/auth';
-import { createAuthor, initializeDefaultCategories } from '../lib/db';
+import { signIn } from '../lib/auth';
 
 type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
 
-export default function CreateAccountScreen() {
+export default function LoginScreen() {
   const navigation = useNavigation<NavigationProp>();
-  const [displayName, setDisplayName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [avatarUri, setAvatarUri] = useState<string | undefined>();
   const [isLoading, setIsLoading] = useState(false);
 
-  const handlePickImage = async () => {
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      allowsEditing: true,
-      aspect: [1, 1],
-      quality: 0.8,
-    });
-
-    if (!result.canceled && result.assets[0]) {
-      setAvatarUri(result.assets[0].uri);
-    }
-  };
-
-  const handleContinue = async () => {
-    if (!displayName.trim()) {
-      Alert.alert('Required', 'Please enter your display name');
-      return;
-    }
+  const handleSignIn = async () => {
     if (!email.trim()) {
       Alert.alert('Required', 'Please enter your email');
       return;
     }
-    if (!password || password.length < 6) {
-      Alert.alert('Required', 'Please enter a password (at least 6 characters)');
+    if (!password) {
+      Alert.alert('Required', 'Please enter your password');
       return;
     }
 
     setIsLoading(true);
     try {
-      // Sign up with backend
-      const user = await signUp(email.trim(), password, displayName.trim());
-      
-      // Create local author profile
-      await createAuthor(displayName.trim(), avatarUri, email.trim(), user.id);
-      
-      // Ensure default categories exist (in case they weren't created during init)
-      await initializeDefaultCategories();
-      
+      await signIn(email.trim(), password);
       navigation.replace('Main');
     } catch (error: any) {
-      console.error('Failed to create account:', error);
-      Alert.alert('Error', error.message || 'Failed to create account. Please try again.');
+      console.error('Failed to sign in:', error);
+      Alert.alert('Error', error.message || 'Failed to sign in. Please check your credentials.');
     } finally {
       setIsLoading(false);
     }
@@ -83,49 +53,22 @@ export default function CreateAccountScreen() {
           <Image source={require('../assets/centericon.png')} style={styles.logoImage} />
         </View>
 
-        <Text style={styles.title}>Welcome to Chowder</Text>
-        <Text style={styles.subtitle}>Create your profile to get started</Text>
-
-        {/* Avatar */}
-        <TouchableOpacity style={styles.avatarContainer} onPress={handlePickImage}>
-          {avatarUri ? (
-            <Image source={{ uri: avatarUri }} style={styles.avatar} />
-          ) : (
-            <View style={styles.avatarPlaceholder}>
-              <MaterialCommunityIcons name="camera" size={32} color={theme.colors.textSecondary} />
-            </View>
-          )}
-          <View style={styles.avatarEdit}>
-            <MaterialCommunityIcons name="pencil" size={16} color={theme.colors.primary} />
-          </View>
-        </TouchableOpacity>
-
-        {/* Display Name Input */}
-        <View style={styles.inputContainer}>
-          <Text style={styles.label}>Display Name</Text>
-          <TextInput
-            style={styles.input}
-            placeholder="e.g., Cam"
-            placeholderTextColor={theme.colors.textSecondary}
-            value={displayName}
-            onChangeText={setDisplayName}
-            autoFocus
-            maxLength={50}
-          />
-        </View>
+        <Text style={styles.title}>Welcome Back</Text>
+        <Text style={styles.subtitle}>Sign in to continue</Text>
 
         {/* Email Input */}
         <View style={styles.inputContainer}>
           <Text style={styles.label}>Email</Text>
           <TextInput
             style={styles.input}
-            placeholder="your.email@example.com"
+            placeholder="your@email.com"
             placeholderTextColor={theme.colors.textSecondary}
             value={email}
             onChangeText={setEmail}
             keyboardType="email-address"
             autoCapitalize="none"
             autoCorrect={false}
+            autoFocus
           />
         </View>
 
@@ -134,7 +77,7 @@ export default function CreateAccountScreen() {
           <Text style={styles.label}>Password</Text>
           <TextInput
             style={styles.input}
-            placeholder="At least 6 characters"
+            placeholder="Enter your password"
             placeholderTextColor={theme.colors.textSecondary}
             value={password}
             onChangeText={setPassword}
@@ -144,21 +87,21 @@ export default function CreateAccountScreen() {
           />
         </View>
 
-        {/* Continue Button */}
+        {/* Sign In Button */}
         <TouchableOpacity
-          style={[styles.button, (!displayName.trim() || !email.trim() || !password || isLoading) && styles.buttonDisabled]}
-          onPress={handleContinue}
-          disabled={!displayName.trim() || !email.trim() || !password || isLoading}
+          style={[styles.button, (!email.trim() || !password || isLoading) && styles.buttonDisabled]}
+          onPress={handleSignIn}
+          disabled={!email.trim() || !password || isLoading}
         >
-          <Text style={styles.buttonText}>{isLoading ? 'Creating...' : 'Create Account'}</Text>
+          <Text style={styles.buttonText}>{isLoading ? 'Signing in...' : 'Sign In'}</Text>
         </TouchableOpacity>
 
-        {/* Login Link */}
+        {/* Create Account Link */}
         <TouchableOpacity
           style={styles.linkButton}
-          onPress={() => navigation.navigate('Login')}
+          onPress={() => navigation.navigate('CreateAccount')}
         >
-          <Text style={styles.linkText}>Already have an account? Sign in</Text>
+          <Text style={styles.linkText}>Don't have an account? Create one</Text>
         </TouchableOpacity>
       </View>
     </SafeAreaView>
@@ -198,39 +141,6 @@ const styles = StyleSheet.create({
     color: theme.colors.textSecondary,
     marginBottom: theme.spacing.xxl,
     textAlign: 'center',
-  },
-  avatarContainer: {
-    position: 'relative',
-    marginBottom: theme.spacing.xl,
-  },
-  avatar: {
-    width: 100,
-    height: 100,
-    borderRadius: 50,
-  },
-  avatarPlaceholder: {
-    width: 100,
-    height: 100,
-    borderRadius: 50,
-    backgroundColor: theme.colors.surface,
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderWidth: 2,
-    borderColor: theme.colors.border,
-    borderStyle: 'dashed',
-  },
-  avatarEdit: {
-    position: 'absolute',
-    bottom: 0,
-    right: 0,
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: theme.colors.background,
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderWidth: 2,
-    borderColor: theme.colors.primary,
   },
   inputContainer: {
     width: '100%',

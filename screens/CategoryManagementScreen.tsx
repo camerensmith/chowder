@@ -20,6 +20,7 @@ import {
   createCategory,
   deleteCategory,
   updateCategoryOrder,
+  initializeDefaultCategories,
 } from '../lib/db';
 import { Category } from '../types';
 
@@ -127,6 +128,29 @@ export default function CategoryManagementScreen() {
     }
   };
 
+  const handleRestoreDefaults = () => {
+    Alert.alert(
+      'Restore Default Categories',
+      'This will add back any missing default categories. Existing categories will not be removed.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Restore',
+          onPress: async () => {
+            try {
+              await initializeDefaultCategories();
+              await loadCategories();
+              Alert.alert('Success', 'Default categories restored');
+            } catch (error) {
+              console.error('Failed to restore default categories:', error);
+              Alert.alert('Error', 'Failed to restore default categories');
+            }
+          },
+        },
+      ]
+    );
+  };
+
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
       {/* Header */}
@@ -141,6 +165,15 @@ export default function CategoryManagementScreen() {
       </View>
 
       <ScrollView style={styles.content}>
+        <TouchableOpacity
+          style={styles.restoreButton}
+          onPress={handleRestoreDefaults}
+          activeOpacity={0.7}
+        >
+          <MaterialCommunityIcons name="restore" size={20} color={theme.colors.primary} />
+          <Text style={styles.restoreButtonText}>Restore Default Categories</Text>
+        </TouchableOpacity>
+
         {categories.length === 0 ? (
           <View style={styles.emptyContainer}>
             <Text style={styles.emptyText}>No categories yet</Text>
@@ -266,6 +299,21 @@ const styles = StyleSheet.create({
   content: {
     flex: 1,
     padding: theme.spacing.lg,
+  },
+  restoreButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: theme.colors.surface,
+    padding: theme.spacing.md,
+    borderRadius: theme.borderRadius.md,
+    marginBottom: theme.spacing.lg,
+    ...theme.shadow,
+  },
+  restoreButtonText: {
+    ...theme.typography.body,
+    color: theme.colors.primary,
+    fontWeight: '600',
+    marginLeft: theme.spacing.sm,
   },
   emptyContainer: {
     flex: 1,
