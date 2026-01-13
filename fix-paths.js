@@ -53,6 +53,22 @@ const manifestWebPath = withBasePath('/manifest.webmanifest');
 html = html.replace(/href="\/manifest\.json"/g, `href="${manifestPath}"`);
 html = html.replace(/href="\/manifest\.webmanifest"/g, `href="${manifestWebPath}"`);
 
+// Ensure favicon link tags are present with correct base path
+const faviconPath = withBasePath('/assets/appicon.png');
+const appleTouchIconPath = withBasePath('/assets/appicon.png');
+
+// Remove existing favicon/apple-touch-icon links
+html = html.replace(/<link[^>]*rel=["'](?:icon|shortcut icon|apple-touch-icon)["'][^>]*>/gi, '');
+
+// Add favicon and apple-touch-icon links in the head section
+if (html.includes('</head>')) {
+  const faviconLinks = `\n    <link rel="icon" type="image/png" href="${faviconPath}" />\n    <link rel="apple-touch-icon" href="${appleTouchIconPath}" />`;
+  html = html.replace('</head>', `${faviconLinks}\n  </head>`);
+} else if (html.includes('<head>')) {
+  const faviconLinks = `\n    <link rel="icon" type="image/png" href="${faviconPath}" />\n    <link rel="apple-touch-icon" href="${appleTouchIconPath}" />`;
+  html = html.replace('<head>', `<head>${faviconLinks}`);
+}
+
 // Write the modified HTML back
 fs.writeFileSync(indexPath, html, 'utf8');
 
@@ -109,14 +125,40 @@ if (fs.existsSync(manifestFilePath)) {
     if (manifest.scope !== updatedScope) {
       manifest.scope = updatedScope;
     }
-    // Fix icon paths (handle root path correctly)
+    // Fix icon paths and ensure appicon.png is used
+    const appiconPath = withBasePath('/assets/appicon.png');
     if (manifest.icons && Array.isArray(manifest.icons)) {
+      // Update all icon paths to use base path
       manifest.icons = manifest.icons.map((icon) => {
         if (icon.src && icon.src.startsWith('/')) {
           icon.src = withBasePath(icon.src);
         }
+        // If the icon path contains 'favicon' or 'icon', replace with appicon
+        if (icon.src && (icon.src.includes('favicon') || icon.src.includes('icon.png'))) {
+          icon.src = appiconPath;
+        }
         return icon;
       });
+    } else {
+      // If no icons array exists, create one with appicon.png
+      manifest.icons = [
+        {
+          src: appiconPath,
+          sizes: '512x512',
+          type: 'image/png',
+          purpose: 'any maskable'
+        },
+        {
+          src: appiconPath,
+          sizes: '192x192',
+          type: 'image/png'
+        },
+        {
+          src: appiconPath,
+          sizes: '144x144',
+          type: 'image/png'
+        }
+      ];
     }
     fs.writeFileSync(manifestFilePath, JSON.stringify(manifest, null, 2), 'utf8');
     console.log('✅ Fixed paths in manifest.json');
