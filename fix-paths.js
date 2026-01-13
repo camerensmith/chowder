@@ -69,10 +69,10 @@ function fixJsFiles(dir) {
 const jsCount = fixJsFiles(path.join(distDir, '_expo'));
 
 // Fix manifest.json if it exists
-const manifestPath = path.join(distDir, 'manifest.json');
-if (fs.existsSync(manifestPath)) {
+const manifestFilePath = path.join(distDir, 'manifest.json');
+if (fs.existsSync(manifestFilePath)) {
   try {
-    const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+    const manifest = JSON.parse(fs.readFileSync(manifestFilePath, 'utf8'));
     // Fix start_url and scope if needed (handle root path correctly)
     if (manifest.start_url && !manifest.start_url.startsWith(BASE_PATH === '/' ? '/' : BASE_PATH)) {
       manifest.start_url = manifest.start_url === '/' ? '/' : (BASE_PATH === '/' ? manifest.start_url : `${BASE_PATH}${manifest.start_url}`);
@@ -89,7 +89,7 @@ if (fs.existsSync(manifestPath)) {
         return icon;
       });
     }
-    fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2), 'utf8');
+    fs.writeFileSync(manifestFilePath, JSON.stringify(manifest, null, 2), 'utf8');
     console.log('✅ Fixed paths in manifest.json');
   } catch (err) {
     console.warn('⚠️  Could not parse manifest.json:', err);
