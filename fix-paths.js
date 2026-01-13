@@ -6,7 +6,7 @@ const path = require('path');
 const normalizeBasePath = (value = '/') => {
   if (!value || value === '/') return '/';
   // Normalize any repeated leading/trailing slashes that may come from env input
-  const trimmed = value.trim().replace(/^\/+|\/+$/, '');
+  const trimmed = value.trim().replace(/^\/+/, '').replace(/\/+$/, '');
   return trimmed ? `/${trimmed}` : '/';
 };
 
@@ -94,9 +94,20 @@ const manifestFilePath = path.join(distDir, 'manifest.json');
 if (fs.existsSync(manifestFilePath)) {
   try {
     const manifest = JSON.parse(fs.readFileSync(manifestFilePath, 'utf8'));
+    const normalizeUrlForBase = (value, fallback = '/') => {
+      const normalized = (value || fallback).startsWith('/') ? (value || fallback) : `/${value || fallback}`;
+      if (BASE_PATH === '/') return normalized;
+      return normalized.startsWith(BASE_PATH) ? normalized : withBasePath(normalized);
+    };
     // Fix start_url and scope to match the deployment base path
-    manifest.start_url = withBasePath('/');
-    manifest.scope = withBasePath('/');
+    const updatedStartUrl = normalizeUrlForBase(manifest.start_url);
+    if (manifest.start_url !== updatedStartUrl) {
+      manifest.start_url = updatedStartUrl;
+    }
+    const updatedScope = normalizeUrlForBase(manifest.scope);
+    if (manifest.scope !== updatedScope) {
+      manifest.scope = updatedScope;
+    }
     // Fix icon paths (handle root path correctly)
     if (manifest.icons && Array.isArray(manifest.icons)) {
       manifest.icons = manifest.icons.map((icon) => {
