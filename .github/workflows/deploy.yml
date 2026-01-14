@@ -18,11 +18,8 @@ permissions:
   id-token: write
 
 jobs:
-  deploy:
+  build:
     runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -57,9 +54,19 @@ jobs:
         uses: actions/upload-pages-artifact@v3
         with:
           path: ./dist
-      
+          retention-days: 1
+  
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
       - name: Deploy to GitHub Pages
         id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v4.0.5
         with:
-          timeout: 900000  # 15 minutes (increased from default 10 minutes)
+          timeout: 600000  # 10 minutes timeout
+          error_count: 120  # Allow up to 120 status check iterations (10 minutes at 5s intervals)
+          reporting_interval: 5000  # Check status every 5 seconds (default)
