@@ -39,6 +39,22 @@ if (fs.existsSync(swSourcePath)) {
   console.warn('⚠️  Service worker source not found at:', swSourcePath);
 }
 
+// Ensure assets directory exists in dist and copy appicon.png
+const distAssetsDir = path.join(distDir, 'assets');
+const appiconSourcePath = path.join(distDir, 'appicon.png');
+const appiconDestPath = path.join(distAssetsDir, 'appicon.png');
+
+if (!fs.existsSync(distAssetsDir)) {
+  fs.mkdirSync(distAssetsDir, { recursive: true });
+}
+
+if (fs.existsSync(appiconSourcePath)) {
+  fs.copyFileSync(appiconSourcePath, appiconDestPath);
+  console.log('✅ Copied appicon.png to dist/assets directory');
+} else {
+  console.warn('⚠️  appicon.png not found at:', appiconSourcePath);
+}
+
 // Read the index.html file
 let html = fs.readFileSync(indexPath, 'utf8');
 
