@@ -60,6 +60,8 @@ jobs:
       
       - name: Deploy to GitHub Pages
         id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v4.0.5
         with:
-          timeout: 900000  # 15 minutes (increased from default 10 minutes)
+          timeout: 600000  # 10 minutes timeout
+          error_count: 120  # Allow up to 120 status check iterations (10 minutes at 5s intervals)
+          reporting_interval: 5000  # Check status every 5 seconds (default)
