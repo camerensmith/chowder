@@ -44,6 +44,8 @@ export default function MapScreen() {
   const [showSearchModal, setShowSearchModal] = useState(false);
   const [showSaveModal, setShowSaveModal] = useState(false);
   const [clickedLocation, setClickedLocation] = useState<{ latitude: number; longitude: number } | null>(null);
+  const [preFillName, setPreFillName] = useState<string | undefined>(undefined);
+  const [preFillAddress, setPreFillAddress] = useState<string | undefined>(undefined);
   const [userLocation, setUserLocation] = useState<{ latitude: number; longitude: number } | null>(null);
   const [selectedPlace, setSelectedPlace] = useState<Place | null>(null);
   const [selectedPlaceCategory, setSelectedPlaceCategory] = useState<string | undefined>(undefined);
@@ -217,18 +219,18 @@ export default function MapScreen() {
     try {
       const coords = extractCoordinates(result);
       const address = formatAddress(result);
-      const newPlace = await createPlace(
-        result.name,
-        coords.latitude,
-        coords.longitude,
-        address
-      );
-      // Clear filters to ensure the new place is visible on the map
-      await clearFiltersAndReloadPlaces();
+      // Show save modal with pre-filled data from search result
+      setClickedLocation({ latitude: coords.latitude, longitude: coords.longitude });
+      setPreFillName(result.name);
+      setPreFillAddress(address);
       setShowSearchModal(false);
       setSearchQuery('');
+      // Show save modal after a brief delay to allow search modal to close
+      setTimeout(() => {
+        setShowSaveModal(true);
+      }, 100);
     } catch (error) {
-      console.error('Failed to add place:', error);
+      console.error('Failed to process search result:', error);
     }
   };
 
@@ -236,10 +238,12 @@ export default function MapScreen() {
     // Clear selected place when clicking on map
     setSelectedPlace(null);
     setClickedLocation({ latitude: lat, longitude: lng });
+    setPreFillName(undefined);
+    setPreFillAddress(undefined);
     setShowSaveModal(true);
   };
 
-  const handleSavePlace = async (name: string, address?: string) => {
+  const handleSavePlace = async (name: string, address?: string, categoryId?: string, notes?: string) => {
     if (!clickedLocation) return;
     
     try {
@@ -247,7 +251,9 @@ export default function MapScreen() {
         name,
         clickedLocation.latitude,
         clickedLocation.longitude,
-        address
+        address,
+        categoryId,
+        notes
       );
       // Clear filters to ensure the new place is visible on the map
       await clearFiltersAndReloadPlaces();
@@ -407,8 +413,12 @@ export default function MapScreen() {
           onClose={() => {
             setShowSaveModal(false);
             setClickedLocation(null);
+            setPreFillName(undefined);
+            setPreFillAddress(undefined);
           }}
           onSave={handleSavePlace}
+          initialName={preFillName}
+          initialAddress={preFillAddress}
         />
       )}
 
