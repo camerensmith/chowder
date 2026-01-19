@@ -381,6 +381,16 @@ export async function updateAuthor(updates: Partial<Pick<Author, 'displayName' |
   await db.runAsync(`UPDATE author SET ${fields}, synced = ?`, values);
 }
 
+export async function deleteAuthor(): Promise<void> {
+  if (Platform.OS === 'web') {
+    await indexedDB.deleteAuthor();
+    return;
+  }
+
+  if (!db) throw new Error('Database not initialized');
+  await db.runAsync('DELETE FROM author');
+}
+
 // ===== PLACE QUERIES =====
 
 export async function createPlace(
