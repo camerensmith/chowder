@@ -58,7 +58,7 @@ export default function CreateAccountScreen() {
     setIsLoading(true);
     try {
       // Sign up with backend
-      const user = await signUp(email.trim(), password, displayName.trim());
+      const { user, emailSent } = await signUp(email.trim(), password, displayName.trim());
       
       // Create local author profile
       await createAuthor(displayName.trim(), avatarUri, email.trim(), user.id);
@@ -66,7 +66,16 @@ export default function CreateAccountScreen() {
       // Ensure default categories exist (in case they weren't created during init)
       await initializeDefaultCategories();
       
-      navigation.replace('Main');
+      // Show success message with email status
+      if (emailSent) {
+        Alert.alert(
+          'Welcome!',
+          `Account created successfully! A welcome email has been sent to ${email.trim()}.`,
+          [{ text: 'OK', onPress: () => navigation.replace('Main') }]
+        );
+      } else {
+        navigation.replace('Main');
+      }
     } catch (error: any) {
       console.error('Failed to create account:', error);
       Alert.alert('Error', error.message || 'Failed to create account. Please try again.');
