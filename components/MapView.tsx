@@ -68,6 +68,7 @@ export default function MapView({ places, onPlacePress, onPlaceSelect, onMapClic
   const selectedMarkerRef = useRef<any>(null);
   const nativeMapRef = useRef<any>(null);
   const [tileProviderId, setTileProviderId] = useState<string>('osm');
+  const [mapReady, setMapReady] = useState<boolean>(false); // Track when map is initialized
 
   // Load tile provider preference and listen for changes
   useEffect(() => {
@@ -153,6 +154,9 @@ export default function MapView({ places, onPlacePress, onPlaceSelect, onMapClic
           onMapClick(e.latlng.lat, e.latlng.lng);
         });
       }
+
+      // Mark map as ready so markers can be added
+      setMapReady(true);
     };
 
     initMap().catch(console.error);
@@ -172,6 +176,7 @@ export default function MapView({ places, onPlacePress, onPlaceSelect, onMapClic
       }
       markersRef.current = [];
       tileLayerRef.current = null;
+      setMapReady(false);
     };
   }, [initialCenter, initialZoom, onMapClick]);
 
@@ -202,7 +207,7 @@ export default function MapView({ places, onPlacePress, onPlaceSelect, onMapClic
 
   // Update markers whenever places change (separate effect)
   useEffect(() => {
-    if (Platform.OS !== 'web' || !mapInstanceRef.current) return;
+    if (Platform.OS !== 'web' || !mapReady) return;
 
     const updateMarkers = async () => {
       const L = await import('leaflet');
@@ -273,7 +278,7 @@ export default function MapView({ places, onPlacePress, onPlaceSelect, onMapClic
     };
 
     updateMarkers().catch(console.error);
-  }, [places, selectedPlaceId, onPlaceSelect, initialCenter, center]);
+  }, [places, selectedPlaceId, onPlaceSelect, initialCenter, center, mapReady]);
 
   // Handle dynamic center updates (for recentering)
   useEffect(() => {
