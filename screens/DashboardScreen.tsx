@@ -25,7 +25,7 @@ interface StatCardProps {
 
 function CircularStatCard({ value, label, sublabel, color = theme.colors.primary }: StatCardProps) {
   const size = 100;
-  const strokeWidth = 8;
+  const strokeWidth = 6;
   const radius = (size - strokeWidth) / 2;
   const circumference = 2 * Math.PI * radius;
   
@@ -38,7 +38,7 @@ function CircularStatCard({ value, label, sublabel, color = theme.colors.primary
             cx={size / 2}
             cy={size / 2}
             r={radius}
-            stroke={theme.colors.border}
+            stroke="#D8D8D8"
             strokeWidth={strokeWidth}
             fill={theme.colors.background}
           />
