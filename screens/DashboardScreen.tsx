@@ -316,7 +316,7 @@ const styles = StyleSheet.create({
     height: 48,
   },
   headerSpacer: {
-    width: 28,
+    width: 32,
   },
   scrollContent: {
     paddingBottom: theme.spacing.xxl,
