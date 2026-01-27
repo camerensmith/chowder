@@ -453,15 +453,4 @@ const styles = StyleSheet.create({
     color: theme.colors.textSecondary,
     fontWeight: '400',
   },
-  countBadge: {
-    backgroundColor: theme.colors.secondary,
-    borderRadius: theme.borderRadius.full,
-    paddingHorizontal: theme.spacing.md,
-    paddingVertical: theme.spacing.xs,
-  },
-  countBadgeText: {
-    ...theme.typography.caption,
-    color: theme.colors.onSecondary,
-    fontWeight: '600',
-  },
 });
