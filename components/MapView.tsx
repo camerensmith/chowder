@@ -30,12 +30,21 @@ if (Platform.OS !== 'web') {
 }
 
 // Import pin image - Expo will handle the path
-let pinImageUri: string | null = null;
+let pinImageSource: any = null; // For native: require() result (number)
+let pinImageUri: string | null = null; // For web: string URL
 try {
   const pinImage = require('../assets/pin.png');
-  pinImageUri = typeof pinImage === 'string' ? pinImage : (pinImage.default || pinImage.uri || pinImage);
+  
+  if (Platform.OS === 'web') {
+    // On web, extract the URL string for Leaflet
+    pinImageUri = typeof pinImage === 'string' ? pinImage : (pinImage.default || pinImage.uri || pinImage);
+  } else {
+    // On native, store the raw require() result (asset ID number)
+    pinImageSource = pinImage;
+  }
 } catch (e) {
   // Pin image not found, will use default
+  pinImageSource = null;
   pinImageUri = null;
 }
 
@@ -59,6 +68,7 @@ export default function MapView({ places, onPlacePress, onPlaceSelect, onMapClic
   const selectedMarkerRef = useRef<any>(null);
   const nativeMapRef = useRef<any>(null);
   const [tileProviderId, setTileProviderId] = useState<string>('osm');
+  const [mapReady, setMapReady] = useState<boolean>(false); // Track when map is initialized
 
   // Load tile provider preference and listen for changes
   useEffect(() => {
@@ -144,6 +154,9 @@ export default function MapView({ places, onPlacePress, onPlaceSelect, onMapClic
           onMapClick(e.latlng.lat, e.latlng.lng);
         });
       }
+
+      // Mark map as ready so markers can be added
+      setMapReady(true);
     };
 
     initMap().catch(console.error);
@@ -163,6 +176,7 @@ export default function MapView({ places, onPlacePress, onPlaceSelect, onMapClic
       }
       markersRef.current = [];
       tileLayerRef.current = null;
+      setMapReady(false);
     };
   }, [initialCenter, initialZoom, onMapClick]);
 
@@ -193,7 +207,7 @@ export default function MapView({ places, onPlacePress, onPlaceSelect, onMapClic
 
   // Update markers whenever places change (separate effect)
   useEffect(() => {
-    if (Platform.OS !== 'web' || !mapInstanceRef.current) return;
+    if (Platform.OS !== 'web' || !mapReady) return;
 
     const updateMarkers = async () => {
       const L = await import('leaflet');
@@ -264,7 +278,7 @@ export default function MapView({ places, onPlacePress, onPlaceSelect, onMapClic
     };
 
     updateMarkers().catch(console.error);
-  }, [places, selectedPlaceId, onPlaceSelect, initialCenter, center]);
+  }, [places, selectedPlaceId, onPlaceSelect, initialCenter, center, mapReady]);
 
   // Handle dynamic center updates (for recentering)
   useEffect(() => {
@@ -417,7 +431,7 @@ export default function MapView({ places, onPlacePress, onPlaceSelect, onMapClic
                     onPlacePress(place);
                   }
                 }}
-                icon={pinImageUri ? { uri: pinImageUri } : undefined}
+                icon={pinImageSource || undefined}
                 anchor={{ x: 0.5, y: 1 }}
               />
             ))}
@@ -458,7 +472,7 @@ export default function MapView({ places, onPlacePress, onPlaceSelect, onMapClic
                     onPlacePress(place);
                   }
                 }}
-                image={pinImageUri ? { uri: pinImageUri } : undefined}
+                image={pinImageSource || undefined}
                 anchor={{ x: 0.5, y: 1 }}
               />
             ))}
