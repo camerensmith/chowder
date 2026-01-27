@@ -13,6 +13,7 @@ import { RootStackParamList, MainTabParamList } from './types';
 // Screens
 import CreateAccountScreen from './screens/CreateAccountScreen';
 import LoginScreen from './screens/LoginScreen';
+import DashboardScreen from './screens/DashboardScreen';
 import ListsScreen from './screens/ListsScreen';
 import MapScreen from './screens/MapScreen';
 import SettingsScreen from './screens/SettingsScreen';
@@ -42,6 +43,16 @@ function TabNavigator() {
         },
       }}
     >
+      <Tab.Screen
+        name="Home"
+        component={DashboardScreen}
+        options={{
+          tabBarLabel: 'Home',
+          tabBarIcon: ({ color, size }) => (
+            <MaterialCommunityIcons name="home" size={size} color={color} />
+          ),
+        }}
+      />
       <Tab.Screen
         name="Lists"
         component={ListsScreen}
