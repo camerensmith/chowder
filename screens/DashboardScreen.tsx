@@ -241,17 +241,17 @@ export default function DashboardScreen() {
           <CircularStatCard
             value={restaurantsAdded}
             label="Restaurants Added"
-            sublabel={timeRange}
+            sublabel={`This ${timeRange}`}
           />
           <CircularStatCard
             value={checkIns}
             label="Check-Ins"
-            sublabel={timeRange}
+            sublabel={`This ${timeRange}`}
           />
           <CircularStatCard
             value={avgScoreDisplay}
             label="Avg Rating"
-            sublabel={timeRange}
+            sublabel={`This ${timeRange}`}
           />
           <CircularStatCard
             value={listsCreated}
