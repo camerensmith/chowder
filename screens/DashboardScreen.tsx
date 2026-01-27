@@ -125,10 +125,12 @@ export default function DashboardScreen() {
   const timeFilteredVisits = visits.filter(v => v.createdAt >= cutoff);
   const timeFilteredVisitIds = new Set(timeFilteredVisits.map(v => v.id));
   const timeFilteredDishes = dishes.filter(d => timeFilteredVisitIds.has(d.visitId));
-  const avgScore = timeFilteredDishes.length > 0
-    ? (timeFilteredDishes.reduce((sum, d) => sum + d.rating, 0) / timeFilteredDishes.length)
-    : 0;
-  const avgScoreDisplay = avgScore > 0 ? avgScore.toFixed(1) : '—';
+  const { sum, count } = timeFilteredDishes.reduce(
+    (acc, d) => ({ sum: acc.sum + d.rating, count: acc.count + 1 }),
+    { sum: 0, count: 0 }
+  );
+  const avgScore = count > 0 ? sum / count : 0;
+  const avgScoreDisplay = avgScore > 0 ? avgScore.toFixed(1) : '-';
 
   // Stat 4: Lists Created (total, no time filter)
   const listsCreated = lists.length;
@@ -146,7 +148,7 @@ export default function DashboardScreen() {
     });
   });
   
-  let favoriteMeal = '—';
+  let favoriteMeal = '-';
   let maxCount = 0;
   let maxDate = 0;
   dishCounts.forEach((data, name) => {
@@ -158,13 +160,17 @@ export default function DashboardScreen() {
   });
 
   // Stat 7: Top 5 Restaurants (by meal count, min 2 meals)
+  // Create lookup maps for better performance
+  const visitsById = new Map(visits.map(v => [v.id, v]));
+  const placesById = new Map(places.map(p => [p.id, p]));
+  
   const restaurantMealCounts = new Map<string, { name: string; count: number }>();
   
   // Count meals per restaurant
   dishes.forEach(dish => {
-    const visit = visits.find(v => v.id === dish.visitId);
+    const visit = visitsById.get(dish.visitId);
     if (visit) {
-      const place = places.find(p => p.id === visit.placeId);
+      const place = placesById.get(visit.placeId);
       if (place) {
         const existing = restaurantMealCounts.get(place.id) || { name: place.name, count: 0 };
         restaurantMealCounts.set(place.id, {
@@ -215,7 +221,7 @@ export default function DashboardScreen() {
         <View style={styles.logoContainer}>
           <Image source={require('../assets/centericon.png')} style={styles.logoImage} resizeMode="contain" />
         </View>
-        <View style={{ width: 28 }} />
+        <View style={styles.headerSpacer} />
       </View>
 
       <ScrollView
@@ -274,7 +280,9 @@ export default function DashboardScreen() {
                   {restaurant.name}
                 </Text>
                 <View style={styles.countBadge}>
-                  <Text style={styles.countBadgeText}>{restaurant.count} meals</Text>
+                  <Text style={styles.countBadgeText}>
+                    {restaurant.count} {restaurant.count === 1 ? 'meal' : 'meals'}
+                  </Text>
                 </View>
               </View>
             ))}
@@ -306,6 +314,9 @@ const styles = StyleSheet.create({
   logoImage: {
     width: 157,
     height: 48,
+  },
+  headerSpacer: {
+    width: 28,
   },
   scrollContent: {
     paddingBottom: theme.spacing.xxl,
