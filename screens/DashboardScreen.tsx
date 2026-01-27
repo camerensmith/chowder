@@ -273,17 +273,19 @@ export default function DashboardScreen() {
         {/* Top 5 Restaurants */}
         {topRestaurants.length > 0 && (
           <View style={styles.topRestaurantsSection}>
+            <View style={styles.sectionDivider} />
             <Text style={styles.sectionTitle}>Top 5 Restaurants</Text>
             {topRestaurants.map((restaurant, index) => (
               <View key={index} style={styles.restaurantRow}>
+                <View style={styles.rankBadge}>
+                  <Text style={styles.rankBadgeText}>#{index + 1}</Text>
+                </View>
                 <Text style={styles.restaurantName} numberOfLines={1}>
                   {restaurant.name}
                 </Text>
-                <View style={styles.countBadge}>
-                  <Text style={styles.countBadgeText}>
-                    {restaurant.count} {restaurant.count === 1 ? 'meal' : 'meals'}
-                  </Text>
-                </View>
+                <Text style={styles.mealCount}>
+                  {restaurant.count} {restaurant.count === 1 ? 'meal' : 'meals'}
+                </Text>
               </View>
             ))}
           </View>
@@ -405,6 +407,12 @@ const styles = StyleSheet.create({
     marginHorizontal: theme.spacing.lg,
     marginTop: theme.spacing.md,
   },
+  sectionDivider: {
+    height: 1,
+    backgroundColor: theme.colors.border,
+    marginBottom: theme.spacing.lg,
+    opacity: 0.5,
+  },
   sectionTitle: {
     ...theme.typography.h3,
     color: theme.colors.text,
@@ -413,12 +421,25 @@ const styles = StyleSheet.create({
   restaurantRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
     backgroundColor: theme.colors.surface,
     borderRadius: theme.borderRadius.md,
     padding: theme.spacing.md,
     marginBottom: theme.spacing.sm,
     ...theme.shadow,
+  },
+  rankBadge: {
+    backgroundColor: theme.colors.primary,
+    borderRadius: theme.borderRadius.sm,
+    paddingHorizontal: theme.spacing.sm,
+    paddingVertical: theme.spacing.xs,
+    marginRight: theme.spacing.md,
+    minWidth: 32,
+    alignItems: 'center',
+  },
+  rankBadgeText: {
+    ...theme.typography.caption,
+    color: theme.colors.background,
+    fontWeight: '700',
   },
   restaurantName: {
     ...theme.typography.body,
@@ -427,15 +448,9 @@ const styles = StyleSheet.create({
     flex: 1,
     marginRight: theme.spacing.md,
   },
-  countBadge: {
-    backgroundColor: theme.colors.secondary,
-    borderRadius: theme.borderRadius.full,
-    paddingHorizontal: theme.spacing.md,
-    paddingVertical: theme.spacing.xs,
-  },
-  countBadgeText: {
-    ...theme.typography.caption,
-    color: theme.colors.onSecondary,
-    fontWeight: '600',
+  mealCount: {
+    ...theme.typography.bodySmall,
+    color: theme.colors.textSecondary,
+    fontWeight: '400',
   },
 });
