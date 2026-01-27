@@ -30,12 +30,21 @@ if (Platform.OS !== 'web') {
 }
 
 // Import pin image - Expo will handle the path
-let pinImageUri: string | null = null;
+let pinImageSource: any = null; // For native: require() result (number)
+let pinImageUri: string | null = null; // For web: string URL
 try {
   const pinImage = require('../assets/pin.png');
-  pinImageUri = typeof pinImage === 'string' ? pinImage : (pinImage.default || pinImage.uri || pinImage);
+  
+  if (Platform.OS === 'web') {
+    // On web, extract the URL string for Leaflet
+    pinImageUri = typeof pinImage === 'string' ? pinImage : (pinImage.default || pinImage.uri || pinImage);
+  } else {
+    // On native, store the raw require() result (asset ID number)
+    pinImageSource = pinImage;
+  }
 } catch (e) {
   // Pin image not found, will use default
+  pinImageSource = null;
   pinImageUri = null;
 }
 
@@ -417,7 +426,7 @@ export default function MapView({ places, onPlacePress, onPlaceSelect, onMapClic
                     onPlacePress(place);
                   }
                 }}
-                icon={pinImageUri ? { uri: pinImageUri } : undefined}
+                icon={pinImageSource || undefined}
                 anchor={{ x: 0.5, y: 1 }}
               />
             ))}
@@ -458,7 +467,7 @@ export default function MapView({ places, onPlacePress, onPlaceSelect, onMapClic
                     onPlacePress(place);
                   }
                 }}
-                image={pinImageUri ? { uri: pinImageUri } : undefined}
+                image={pinImageSource || undefined}
                 anchor={{ x: 0.5, y: 1 }}
               />
             ))}
