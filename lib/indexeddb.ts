@@ -209,6 +209,23 @@ async function remove(storeName: string, id: string): Promise<void> {
   });
 }
 
+async function clearStore(storeName: string): Promise<void> {
+  const database = await openDatabase();
+  return new Promise((resolve, reject) => {
+    const transaction = database.transaction([storeName], 'readwrite');
+    const store = transaction.objectStore(storeName);
+    const request = store.clear();
+
+    request.onsuccess = () => {
+      resolve();
+    };
+
+    request.onerror = () => {
+      reject(new Error(`Failed to clear ${storeName}`));
+    };
+  });
+}
+
 async function queryByIndex<T>(storeName: string, indexName: string, value: any): Promise<T[]> {
   const database = await openDatabase();
   return new Promise((resolve, reject) => {
@@ -256,6 +273,10 @@ export async function getAuthor(): Promise<Author | null> {
 
 export async function putAuthor(author: Author): Promise<void> {
   await put(STORES.author, author);
+}
+
+export async function deleteAuthor(): Promise<void> {
+  await clearStore(STORES.author);
 }
 
 // Place operations
