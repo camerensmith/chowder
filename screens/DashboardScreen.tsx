@@ -130,7 +130,7 @@ export default function DashboardScreen() {
     { sum: 0, count: 0 }
   );
   const avgScore = count > 0 ? sum / count : 0;
-  const avgScoreDisplay = avgScore > 0 ? avgScore.toFixed(1) : '-';
+  const avgScoreDisplay = count > 0 ? avgScore.toFixed(1) : '—';
 
   // Stat 4: Lists Created (total, no time filter)
   const listsCreated = lists.length;
@@ -148,7 +148,7 @@ export default function DashboardScreen() {
     });
   });
   
-  let favoriteMeal = '-';
+  let favoriteMeal = '—';
   let maxCount = 0;
   let maxDate = 0;
   dishCounts.forEach((data, name) => {
