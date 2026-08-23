@@ -399,16 +399,14 @@ export default function MapView({ places, onPlacePress, onPlaceSelect, onMapClic
 
       if (!pendingPin) return;
 
-      // Create a visually distinct pending-pin icon (red / default Leaflet icon tinted)
+      // Create a visually distinct pending-pin icon using a red drop-pin SVG
       const pendingIcon = L.default.divIcon({
         className: '',
-        html: `<div style="
-          width:28px;height:36px;
-          background:url('${pinImageUri || 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png'}') center/contain no-repeat;
-          filter: hue-rotate(180deg) saturate(3);
-          transform-origin: bottom center;
-          animation: pendingBounce 0.4s ease-out;
-        "></div>`,
+        html: `<svg xmlns="http://www.w3.org/2000/svg" width="28" height="36" viewBox="0 0 28 36">
+          <path d="M14 0C6.268 0 0 6.268 0 14c0 9.333 14 22 14 22S28 23.333 28 14C28 6.268 21.732 0 14 0z"
+            fill="#e53935" stroke="#b71c1c" stroke-width="1.5"/>
+          <circle cx="14" cy="14" r="5" fill="#fff"/>
+        </svg>`,
         iconSize: [28, 36],
         iconAnchor: [14, 36],
       });
