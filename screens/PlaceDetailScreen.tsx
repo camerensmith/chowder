@@ -10,6 +10,7 @@ import {
   Modal,
   Platform,
 } from 'react-native';
+import * as ImagePicker from 'expo-image-picker';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useRoute, useNavigation } from '@react-navigation/native';
@@ -326,6 +327,30 @@ export default function PlaceDetailScreen() {
     }
   };
 
+  const handleQuickAddImage = async () => {
+    try {
+      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert('Permission needed', 'Please allow access to your photo library.');
+        return;
+      }
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: true,
+        aspect: [4, 3],
+        quality: 0.8,
+      });
+      if (!result.canceled && result.assets.length > 0) {
+        const uri = result.assets[0].uri;
+        await updatePlace(placeId, { coverImageUri: uri });
+        await loadPlace();
+      }
+    } catch (error) {
+      console.error('Failed to add image:', error);
+      Alert.alert('Error', 'Failed to update photo.');
+    }
+  };
+
   const renderStars = (rating: number, interactive: boolean = false) => {
     if (interactive) {
       return (
@@ -393,11 +418,26 @@ export default function PlaceDetailScreen() {
 
       <ScrollView style={styles.content}>
         {/* Main Image */}
-        {mainImageUri && (
-          <View style={styles.imageContainer}>
+        <TouchableOpacity
+          style={styles.imageContainer}
+          onPress={handleQuickAddImage}
+          activeOpacity={0.85}
+          accessibilityLabel="Tap to change cover photo"
+        >
+          {mainImageUri ? (
             <Image source={{ uri: mainImageUri }} style={styles.mainImage} resizeMode="cover" />
-          </View>
-        )}
+          ) : (
+            <View style={styles.imagePlaceholder}>
+              <MaterialCommunityIcons name="camera-plus-outline" size={48} color={theme.colors.textSecondary} />
+              <Text style={styles.imagePlaceholderText}>Add a cover photo</Text>
+            </View>
+          )}
+          {mainImageUri && (
+            <View style={styles.imageOverlay}>
+              <MaterialCommunityIcons name="camera-plus-outline" size={20} color="#FFFFFF" />
+            </View>
+          )}
+        </TouchableOpacity>
 
         {/* Rating */}
         <View style={styles.ratingSection}>

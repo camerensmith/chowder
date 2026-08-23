@@ -16,7 +16,7 @@ import type { RouteProp } from '@react-navigation/native';
 import { RootStackParamList, SharePayload } from '../types';
 import { theme } from '../lib/theme';
 import { parseShareCode, storeShareCode } from '../lib/sharing';
-import { getAuthor, createList, addPlaceToList, createPlace } from '../lib/db';
+import { getAuthor, createList, addPlaceToList, createPlace, getAllLists, deleteList } from '../lib/db';
 
 type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
 type RoutePropType = RouteProp<RootStackParamList, 'ShareViewer'>;
@@ -61,13 +61,23 @@ export default function ShareViewerScreen() {
 
     try {
       setIsImporting(true);
-      const author = await getAuthor();
-      const authorName = author?.displayName || 'Someone';
 
-      // Create new list
+      // Remove existing imported lists from this friend so re-import replaces them
+      const existingLists = await getAllLists();
+      const oldFriendLists = existingLists.filter(l => l.importedFrom === payload.authorName);
+      for (const old of oldFriendLists) {
+        await deleteList(old.id);
+      }
+
+      // Create new list tagged with the friend's name
       const newList = await createList(
         `${payload.title} (from ${payload.authorName})`,
-        `Imported from ${payload.authorName}`
+        `Imported from ${payload.authorName}`,
+        undefined,
+        undefined,
+        undefined,
+        payload.authorName,
+        Date.now()
       );
 
       // Add all places to the database and then to the list
