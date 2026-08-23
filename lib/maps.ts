@@ -129,3 +129,52 @@ export async function reverseGeocode(latitude: number, longitude: number): Promi
     return null;
   }
 }
+
+export interface ReverseGeocodeDetail {
+  address: string;       // Human-readable short address
+  placeName?: string;    // Named place at this location (e.g. restaurant, shop), if any
+}
+
+// Reverse geocoding with place name detection
+export async function reverseGeocodeDetailed(latitude: number, longitude: number): Promise<ReverseGeocodeDetail | null> {
+  try {
+    const url = new URL('https://nominatim.openstreetmap.org/reverse');
+    url.searchParams.append('lat', latitude.toString());
+    url.searchParams.append('lon', longitude.toString());
+    url.searchParams.append('format', 'json');
+    url.searchParams.append('addressdetails', '1');
+    url.searchParams.append('namedetails', '1');
+
+    const response = await fetch(url.toString(), {
+      headers: {
+        'User-Agent': 'Chowder/1.0',
+      },
+    });
+
+    if (!response.ok) {
+      return null;
+    }
+
+    const data = await response.json();
+
+    // Build a short human-readable address
+    const addr = data.address || {};
+    const parts = [
+      addr.road ? (addr.house_number ? `${addr.house_number} ${addr.road}` : addr.road) : undefined,
+      addr.city || addr.town || addr.village || addr.county,
+      addr.state,
+    ].filter(Boolean);
+    const address = parts.join(', ') || data.display_name || '';
+
+    // A "place name" is the top-level name when it differs from the road/address
+    // Nominatim sets `name` when the result is a named amenity/shop/POI rather than a plain address
+    const nameDetails = data.namedetails || {};
+    const placeName: string | undefined =
+      nameDetails.name && nameDetails.name !== addr.road ? nameDetails.name : undefined;
+
+    return { address, placeName };
+  } catch (error) {
+    console.error('Reverse geocoding error:', error);
+    return null;
+  }
+}
