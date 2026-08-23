@@ -54,18 +54,20 @@ interface MapViewProps {
   onPlaceSelect?: (place: Place) => void; // Callback when pin is tapped (for info card)
   onMapClick?: (lat: number, lng: number) => void; // Callback when map is clicked
   selectedPlaceId?: string; // ID of currently selected place (for highlighting)
+  pendingPin?: { latitude: number; longitude: number } | null; // Temporary pin awaiting confirmation
   initialCenter?: { lat: number; lng: number };
   initialZoom?: number;
   center?: { lat: number; lng: number }; // Dynamic center for recentering
   zoom?: number; // Dynamic zoom
 }
 
-export default function MapView({ places, onPlacePress, onPlaceSelect, onMapClick, selectedPlaceId, initialCenter, initialZoom = 13, center, zoom }: MapViewProps) {
+export default function MapView({ places, onPlacePress, onPlaceSelect, onMapClick, selectedPlaceId, pendingPin, initialCenter, initialZoom = 13, center, zoom }: MapViewProps) {
   const mapRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<any>(null);
   const tileLayerRef = useRef<any>(null);
   const markersRef = useRef<any[]>([]);
   const selectedMarkerRef = useRef<any>(null);
+  const pendingMarkerRef = useRef<any>(null);
   const nativeMapRef = useRef<any>(null);
   const [tileProviderId, setTileProviderId] = useState<string>('osm');
   const [mapReady, setMapReady] = useState<boolean>(false); // Track when map is initialized
@@ -380,6 +382,48 @@ export default function MapView({ places, onPlacePress, onPlaceSelect, onMapClic
     updateHighlighting().catch(console.error);
   }, [selectedPlaceId]);
 
+  // Update pending-pin marker on web (Leaflet)
+  useEffect(() => {
+    if (Platform.OS !== 'web' || !mapReady) return;
+
+    const updatePendingMarker = async () => {
+      const L = await import('leaflet');
+      const map = mapInstanceRef.current;
+      if (!map) return;
+
+      // Remove previous pending marker
+      if (pendingMarkerRef.current) {
+        pendingMarkerRef.current.remove();
+        pendingMarkerRef.current = null;
+      }
+
+      if (!pendingPin) return;
+
+      // Create a visually distinct pending-pin icon (red / default Leaflet icon tinted)
+      const pendingIcon = L.default.divIcon({
+        className: '',
+        html: `<div style="
+          width:28px;height:36px;
+          background:url('${pinImageUri || 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png'}') center/contain no-repeat;
+          filter: hue-rotate(180deg) saturate(3);
+          transform-origin: bottom center;
+          animation: pendingBounce 0.4s ease-out;
+        "></div>`,
+        iconSize: [28, 36],
+        iconAnchor: [14, 36],
+      });
+
+      const marker = L.default.marker(
+        [pendingPin.latitude, pendingPin.longitude],
+        { icon: pendingIcon, zIndexOffset: 1000 }
+      ).addTo(map);
+
+      pendingMarkerRef.current = marker;
+    };
+
+    updatePendingMarker().catch(console.error);
+  }, [pendingPin, mapReady]);
+
   // Native map implementation
   if (Platform.OS !== 'web') {
     if (!MapViewNative || !Marker) {
@@ -435,6 +479,17 @@ export default function MapView({ places, onPlacePress, onPlaceSelect, onMapClic
                 anchor={{ x: 0.5, y: 1 }}
               />
             ))}
+            {pendingPin && (
+              <Marker
+                key="__pending__"
+                coordinate={{
+                  latitude: pendingPin.latitude,
+                  longitude: pendingPin.longitude,
+                }}
+                pinColor="blue"
+                anchor={{ x: 0.5, y: 1 }}
+              />
+            )}
           </MapViewNative>
         </View>
       );
@@ -476,6 +531,17 @@ export default function MapView({ places, onPlacePress, onPlaceSelect, onMapClic
                 anchor={{ x: 0.5, y: 1 }}
               />
             ))}
+            {pendingPin && (
+              <Marker
+                key="__pending__"
+                coordinate={{
+                  latitude: pendingPin.latitude,
+                  longitude: pendingPin.longitude,
+                }}
+                pinColor="blue"
+                anchor={{ x: 0.5, y: 1 }}
+              />
+            )}
           </MapViewNative>
         </View>
       );

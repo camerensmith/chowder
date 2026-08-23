@@ -62,6 +62,7 @@ export default function MapScreen() {
   const [showSearchModal, setShowSearchModal] = useState(false);
   const [showSaveModal, setShowSaveModal] = useState(false);
   const [clickedLocation, setClickedLocation] = useState<{ latitude: number; longitude: number } | null>(null);
+  const [pendingPin, setPendingPin] = useState<{ latitude: number; longitude: number } | null>(null);
   const [preFillName, setPreFillName] = useState<string | undefined>(undefined);
   const [preFillAddress, setPreFillAddress] = useState<string | undefined>(undefined);
   const [userLocation, setUserLocation] = useState<{ latitude: number; longitude: number } | null>(null);
@@ -366,10 +367,21 @@ export default function MapScreen() {
   const handleMapClick = (lat: number, lng: number) => {
     // Clear selected place when clicking on map
     setSelectedPlace(null);
-    setClickedLocation({ latitude: lat, longitude: lng });
+    // Drop a pending pin so the user can confirm or tap elsewhere
+    setPendingPin({ latitude: lat, longitude: lng });
     setPreFillName(undefined);
     setPreFillAddress(undefined);
+  };
+
+  const handleConfirmPin = () => {
+    if (!pendingPin) return;
+    setClickedLocation(pendingPin);
+    setPendingPin(null);
     setShowSaveModal(true);
+  };
+
+  const handleCancelPin = () => {
+    setPendingPin(null);
   };
 
   const handleSavePlace = async (name: string, address?: string, categoryId?: string, notes?: string) => {
@@ -394,6 +406,8 @@ export default function MapScreen() {
   };
 
   const handlePlaceSelect = async (place: Place) => {
+    // Dismiss any pending pin when selecting an existing place
+    setPendingPin(null);
     // Reload the place from database to get latest data (including categoryId)
     try {
       const updatedPlace = await getPlace(place.id);
@@ -513,8 +527,25 @@ export default function MapScreen() {
           onPlaceSelect={handlePlaceSelect}
           onMapClick={handleMapClick}
           selectedPlaceId={selectedPlace?.id}
+          pendingPin={pendingPin}
           center={userLocation ? { lat: userLocation.latitude, lng: userLocation.longitude } : undefined}
         />
+        {/* Pending-pin confirmation banner */}
+        {pendingPin && (
+          <View style={styles.pinConfirmBanner}>
+            <Text style={styles.pinConfirmText}>Confirm this location?</Text>
+            <View style={styles.pinConfirmButtons}>
+              <TouchableOpacity style={styles.pinCancelButton} onPress={handleCancelPin}>
+                <Text style={styles.pinCancelButtonText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.pinConfirmButton} onPress={handleConfirmPin}>
+                <MaterialCommunityIcons name="check" size={18} color="#fff" />
+                <Text style={styles.pinConfirmButtonText}>Add Place Here</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        )}
+
         {/* Place Info Card */}
         {selectedPlace && (
           <PlaceInfoCard
@@ -790,5 +821,57 @@ const styles = StyleSheet.create({
     ...theme.typography.caption,
     color: theme.colors.textSecondary,
     marginTop: 2,
+  },
+  pinConfirmBanner: {
+    position: 'absolute',
+    top: theme.spacing.md,
+    left: theme.spacing.md,
+    right: theme.spacing.md,
+    backgroundColor: theme.colors.background,
+    borderRadius: 12,
+    padding: theme.spacing.md,
+    ...theme.shadow,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    zIndex: 10,
+  },
+  pinConfirmText: {
+    ...theme.typography.body,
+    color: theme.colors.text,
+    fontWeight: '600',
+    textAlign: 'center',
+    marginBottom: theme.spacing.sm,
+  },
+  pinConfirmButtons: {
+    flexDirection: 'row',
+    gap: theme.spacing.sm,
+  },
+  pinCancelButton: {
+    flex: 1,
+    paddingVertical: theme.spacing.sm,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    alignItems: 'center',
+  },
+  pinCancelButtonText: {
+    ...theme.typography.body,
+    color: theme.colors.textSecondary,
+    fontWeight: '500',
+  },
+  pinConfirmButton: {
+    flex: 2,
+    flexDirection: 'row',
+    paddingVertical: theme.spacing.sm,
+    borderRadius: 8,
+    backgroundColor: theme.colors.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 4,
+  },
+  pinConfirmButtonText: {
+    ...theme.typography.body,
+    color: '#fff',
+    fontWeight: '600',
   },
 });
