@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useState, useRef } from 'react';
 import {
   View,
   Text,
@@ -7,12 +7,15 @@ import {
   StyleSheet,
   Image,
   Alert,
+  Modal,
+  TextInput,
+  KeyboardAvoidingView,
+  Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { Platform } from 'react-native';
 import { Swipeable } from 'react-native-gesture-handler';
 import { RootStackParamList } from '../types';
 import { theme } from '../lib/theme';
@@ -26,10 +29,14 @@ export default function ListsScreen() {
   const [lists, setLists] = useState<List[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const swipeableRefs = useRef<{ [key: string]: any }>({});
+  const [showCreateModal, setShowCreateModal] = useState(false);
+  const [newListName, setNewListName] = useState('');
 
-  useEffect(() => {
-    loadLists();
-  }, []);
+  useFocusEffect(
+    React.useCallback(() => {
+      loadLists();
+    }, [])
+  );
 
   const loadLists = async () => {
     try {
@@ -42,10 +49,20 @@ export default function ListsScreen() {
     }
   };
 
-  const handleCreateList = async () => {
-    // TODO: Show create list modal
+  const handleCreateList = () => {
+    setNewListName('');
+    setShowCreateModal(true);
+  };
+
+  const handleConfirmCreateList = async () => {
+    const trimmed = newListName.trim();
+    if (!trimmed) {
+      Alert.alert('Name required', 'Please enter a name for your list.');
+      return;
+    }
     try {
-      const newList = await createList('New List');
+      const newList = await createList(trimmed);
+      setShowCreateModal(false);
       await loadLists();
       navigation.navigate('ListDetail', { listId: newList.id });
     } catch (error) {
@@ -177,6 +194,49 @@ export default function ListsScreen() {
           onRefresh={loadLists}
         />
       )}
+
+      {/* Create List Modal */}
+      <Modal
+        visible={showCreateModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowCreateModal(false)}
+      >
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          style={styles.modalOverlay}
+        >
+          <View style={styles.createModal}>
+            <Text style={styles.createModalTitle}>New List</Text>
+            <TextInput
+              style={styles.createModalInput}
+              placeholder="List name"
+              placeholderTextColor={theme.colors.textSecondary}
+              value={newListName}
+              onChangeText={setNewListName}
+              autoFocus
+              returnKeyType="done"
+              onSubmitEditing={handleConfirmCreateList}
+            />
+            <View style={styles.createModalButtons}>
+              <TouchableOpacity
+                style={styles.createModalCancelButton}
+                onPress={() => setShowCreateModal(false)}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.createModalCancelText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.createModalConfirmButton, !newListName.trim() && styles.createModalConfirmButtonDisabled]}
+                onPress={handleConfirmCreateList}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.createModalConfirmText}>Create</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -289,19 +349,6 @@ const styles = StyleSheet.create({
   deleteAction: {
     justifyContent: 'center',
     alignItems: 'center',
-    width: 80,
-    backgroundColor: theme.colors.error,
-    borderRadius: theme.borderRadius.md,
-    marginBottom: theme.spacing.md,
-  },
-  deleteActionContent: {
-    justifyContent: 'center',
-    alignItems: 'center',
-    flex: 1,
-  },
-  deleteAction: {
-    justifyContent: 'center',
-    alignItems: 'center',
     backgroundColor: theme.colors.error,
     borderRadius: theme.borderRadius.md,
     marginBottom: theme.spacing.md,
@@ -315,6 +362,69 @@ const styles = StyleSheet.create({
   },
   deleteActionText: {
     ...theme.typography.bodySmall,
+    color: '#FFFFFF',
+    fontWeight: '600',
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: theme.spacing.xl,
+  },
+  createModal: {
+    backgroundColor: theme.colors.background,
+    borderRadius: theme.borderRadius.lg,
+    padding: theme.spacing.xl,
+    width: '100%',
+    maxWidth: 360,
+    ...theme.shadow,
+  },
+  createModalTitle: {
+    ...theme.typography.h3,
+    color: theme.colors.text,
+    marginBottom: theme.spacing.lg,
+  },
+  createModalInput: {
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    borderRadius: theme.borderRadius.md,
+    paddingHorizontal: theme.spacing.md,
+    paddingVertical: theme.spacing.md,
+    ...theme.typography.body,
+    color: theme.colors.text,
+    backgroundColor: theme.colors.surface,
+    marginBottom: theme.spacing.lg,
+  },
+  createModalButtons: {
+    flexDirection: 'row',
+    gap: theme.spacing.md,
+  },
+  createModalCancelButton: {
+    flex: 1,
+    paddingVertical: theme.spacing.md,
+    alignItems: 'center',
+    borderRadius: theme.borderRadius.md,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+  },
+  createModalCancelText: {
+    ...theme.typography.body,
+    color: theme.colors.textSecondary,
+    fontWeight: '500',
+  },
+  createModalConfirmButton: {
+    flex: 1,
+    paddingVertical: theme.spacing.md,
+    alignItems: 'center',
+    borderRadius: theme.borderRadius.md,
+    backgroundColor: theme.colors.primary,
+  },
+  createModalConfirmButtonDisabled: {
+    opacity: 0.45,
+  },
+  createModalConfirmText: {
+    ...theme.typography.body,
     color: '#FFFFFF',
     fontWeight: '600',
   },

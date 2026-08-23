@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import {
   View,
   Text,
@@ -9,6 +9,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { useFocusEffect } from '@react-navigation/native';
 import Svg, { Circle } from 'react-native-svg';
 import { theme } from '../lib/theme';
 import { getAllPlaces, getAllVisits, getAllLists, getAllDishes } from '../lib/db';
@@ -21,13 +22,15 @@ interface StatCardProps {
   label: string;
   sublabel?: string;
   color?: string;
+  progress?: number; // 0–1, defaults to 0.75 (decorative)
 }
 
-function CircularStatCard({ value, label, sublabel, color = theme.colors.primary }: StatCardProps) {
+function CircularStatCard({ value, label, sublabel, color = theme.colors.primary, progress = 0.75 }: StatCardProps) {
   const size = 100;
   const strokeWidth = 6;
   const radius = (size - strokeWidth) / 2;
   const circumference = 2 * Math.PI * radius;
+  const arcLength = Math.max(0, Math.min(1, progress)) * circumference;
   
   return (
     <View style={styles.statCard}>
@@ -50,7 +53,7 @@ function CircularStatCard({ value, label, sublabel, color = theme.colors.primary
             stroke={color}
             strokeWidth={strokeWidth}
             fill="none"
-            strokeDasharray={`${circumference * 0.75} ${circumference}`}
+            strokeDasharray={`${arcLength} ${circumference}`}
             strokeLinecap="round"
             rotation="-90"
             origin={`${size / 2}, ${size / 2}`}
@@ -74,9 +77,11 @@ export default function DashboardScreen() {
   const [dishes, setDishes] = useState<Dish[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
-  useEffect(() => {
-    loadData();
-  }, []);
+  useFocusEffect(
+    React.useCallback(() => {
+      loadData();
+    }, [])
+  );
 
   const loadData = async () => {
     try {
@@ -252,6 +257,8 @@ export default function DashboardScreen() {
             value={avgScoreDisplay}
             label="Avg Rating"
             sublabel={`This ${timeRange}`}
+            progress={count > 0 ? avgScore / 5 : 0}
+            color={theme.colors.star}
           />
           <CircularStatCard
             value={listsCreated}
