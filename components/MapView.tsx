@@ -69,6 +69,7 @@ export default function MapView({ places, onPlacePress, onPlaceSelect, onMapClic
   const selectedMarkerRef = useRef<any>(null);
   const pendingMarkerRef = useRef<any>(null);
   const nativeMapRef = useRef<any>(null);
+  const hasInitialFitRef = useRef<boolean>(false); // Track whether we've done the initial fitBounds
   const [tileProviderId, setTileProviderId] = useState<string>('osm');
   const [mapReady, setMapReady] = useState<boolean>(false); // Track when map is initialized
 
@@ -179,6 +180,7 @@ export default function MapView({ places, onPlacePress, onPlaceSelect, onMapClic
       markersRef.current = [];
       tileLayerRef.current = null;
       setMapReady(false);
+      hasInitialFitRef.current = false;
     };
   }, [initialCenter, initialZoom, onMapClick]);
 
@@ -272,10 +274,11 @@ export default function MapView({ places, onPlacePress, onPlaceSelect, onMapClic
         markersRef.current.push(marker);
       });
 
-      // Fit map to show all markers (only if no initial center specified and places exist)
-      if (places.length > 0 && !initialCenter && !center) {
+      // Fit map to show all markers (only on first load, not on every marker update)
+      if (places.length > 0 && !initialCenter && !center && !hasInitialFitRef.current) {
         const group = new L.default.FeatureGroup(markersRef.current);
         map.fitBounds(group.getBounds().pad(0.1));
+        hasInitialFitRef.current = true;
       }
     };
 

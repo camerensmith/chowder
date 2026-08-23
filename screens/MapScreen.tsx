@@ -32,7 +32,7 @@ import {
   updatePlace,
   getImportedFriendLists,
 } from '../lib/db';
-import { searchPlaces, extractCoordinates, formatAddress, NominatimResult } from '../lib/maps';
+import { searchPlaces, extractCoordinates, formatAddress, reverseGeocodeDetailed, NominatimResult } from '../lib/maps';
 import MapView from '../components/MapView';
 import PlaceSearchModal from '../components/PlaceSearchModal';
 import PlaceSaveModal from '../components/PlaceSaveModal';
@@ -63,6 +63,8 @@ export default function MapScreen() {
   const [showSaveModal, setShowSaveModal] = useState(false);
   const [clickedLocation, setClickedLocation] = useState<{ latitude: number; longitude: number } | null>(null);
   const [pendingPin, setPendingPin] = useState<{ latitude: number; longitude: number } | null>(null);
+  const [pendingAddress, setPendingAddress] = useState<string | undefined>(undefined);
+  const [pendingRecommendedName, setPendingRecommendedName] = useState<string | undefined>(undefined);
   const [preFillName, setPreFillName] = useState<string | undefined>(undefined);
   const [preFillAddress, setPreFillAddress] = useState<string | undefined>(undefined);
   const [userLocation, setUserLocation] = useState<{ latitude: number; longitude: number } | null>(null);
@@ -369,19 +371,53 @@ export default function MapScreen() {
     setSelectedPlace(null);
     // Drop a pending pin so the user can confirm or tap elsewhere
     setPendingPin({ latitude: lat, longitude: lng });
+    setPendingAddress(undefined);
+    setPendingRecommendedName(undefined);
     setPreFillName(undefined);
     setPreFillAddress(undefined);
+    // Reverse geocode in the background to show address + recommended name
+    reverseGeocodeDetailed(lat, lng).then(detail => {
+      if (detail) {
+        setPendingAddress(detail.address || undefined);
+        setPendingRecommendedName(detail.placeName || undefined);
+      }
+    }).catch(() => {});
   };
 
   const handleConfirmPin = () => {
     if (!pendingPin) return;
     setClickedLocation(pendingPin);
     setPendingPin(null);
+    // Pre-fill address from reverse geocode if available
+    if (pendingAddress) setPreFillAddress(pendingAddress);
+    if (pendingRecommendedName) setPreFillName(pendingRecommendedName);
+    setPendingAddress(undefined);
+    setPendingRecommendedName(undefined);
     setShowSaveModal(true);
+  };
+
+  const handleQuickAddPin = async () => {
+    if (!pendingPin || !pendingRecommendedName) return;
+    try {
+      await createPlace(
+        pendingRecommendedName || 'New Place',
+        pendingPin.latitude,
+        pendingPin.longitude,
+        pendingAddress,
+      );
+      await clearFiltersAndReloadPlaces();
+      setPendingPin(null);
+      setPendingAddress(undefined);
+      setPendingRecommendedName(undefined);
+    } catch (error) {
+      console.error('Failed to quick-add place:', error);
+    }
   };
 
   const handleCancelPin = () => {
     setPendingPin(null);
+    setPendingAddress(undefined);
+    setPendingRecommendedName(undefined);
   };
 
   const handleSavePlace = async (name: string, address?: string, categoryId?: string, notes?: string) => {
@@ -533,7 +569,16 @@ export default function MapScreen() {
         {/* Pending-pin confirmation banner */}
         {pendingPin && (
           <View style={styles.pinConfirmBanner}>
-            <Text style={styles.pinConfirmText}>Confirm this location?</Text>
+            <Text style={styles.pinConfirmText}>Add a place here?</Text>
+            {pendingAddress ? (
+              <Text style={styles.pinAddressText}>{pendingAddress}</Text>
+            ) : null}
+            {pendingRecommendedName ? (
+              <TouchableOpacity style={styles.pinQuickAddButton} onPress={handleQuickAddPin}>
+                <MaterialCommunityIcons name="map-marker-plus" size={16} color={theme.colors.primary} />
+                <Text style={styles.pinQuickAddText}>Quick Add: {pendingRecommendedName}</Text>
+              </TouchableOpacity>
+            ) : null}
             <View style={styles.pinConfirmButtons}>
               <TouchableOpacity style={styles.pinCancelButton} onPress={handleCancelPin}>
                 <Text style={styles.pinCancelButtonText}>Cancel</Text>
@@ -841,6 +886,30 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     textAlign: 'center',
     marginBottom: theme.spacing.sm,
+  },
+  pinAddressText: {
+    ...theme.typography.caption,
+    color: theme.colors.textSecondary,
+    textAlign: 'center',
+    marginBottom: theme.spacing.sm,
+  },
+  pinQuickAddButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    backgroundColor: theme.colors.surface,
+    borderWidth: 1,
+    borderColor: theme.colors.primary,
+    borderRadius: 8,
+    paddingVertical: theme.spacing.sm,
+    paddingHorizontal: theme.spacing.md,
+    marginBottom: theme.spacing.sm,
+  },
+  pinQuickAddText: {
+    ...theme.typography.body,
+    color: theme.colors.primary,
+    fontWeight: '600',
   },
   pinConfirmButtons: {
     flexDirection: 'row',
