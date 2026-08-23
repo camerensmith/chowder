@@ -14,7 +14,8 @@ import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../types';
 import { theme } from '../lib/theme';
-import { getAuthor, exportBackup, importBackup } from '../lib/db';
+import { getAuthor, exportBackup, importBackup, getImportedFriendLists, deleteList } from '../lib/db';
+import { List } from '../types';
 import { signOut } from '../lib/auth';
 import { stopSyncService } from '../lib/sync';
 import { Platform } from 'react-native';
@@ -26,16 +27,19 @@ export default function SettingsScreen() {
   const navigation = useNavigation<NavigationProp>();
   const [author, setAuthor] = useState<any>(null);
   const [tileProviderName, setTileProviderName] = useState<string>('OpenStreetMap');
+  const [friendLists, setFriendLists] = useState<List[]>([]);
 
   useEffect(() => {
     loadAuthor();
     loadTileProvider();
+    loadFriendLists();
   }, []);
 
   // Refresh tile provider name when screen comes into focus
   useFocusEffect(
     React.useCallback(() => {
       loadTileProvider();
+      loadFriendLists();
     }, [])
   );
 
@@ -48,6 +52,52 @@ export default function SettingsScreen() {
   const loadAuthor = async () => {
     const authorData = await getAuthor();
     setAuthor(authorData);
+  };
+
+  const loadFriendLists = async () => {
+    try {
+      const imported = await getImportedFriendLists();
+      setFriendLists(imported);
+    } catch (error) {
+      console.error('Failed to load friend lists:', error);
+    }
+  };
+
+  const handleReimportFriend = (friendName: string) => {
+    Alert.alert(
+      'Re-import Friend',
+      `Import a new share code from ${friendName}? This will replace their existing list.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Import',
+          onPress: () => navigation.navigate('ShareViewer', { friendName }),
+        },
+      ]
+    );
+  };
+
+  const handleRemoveFriendList = (list: List) => {
+    Alert.alert(
+      'Remove Friend List',
+      `Remove "${list.name}"? You can re-import it later.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Remove',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await deleteList(list.id);
+              loadFriendLists();
+            } catch (error) {
+              console.error('Failed to remove friend list:', error);
+              Alert.alert('Error', 'Failed to remove list.');
+            }
+          },
+        },
+      ]
+    );
   };
 
   const handleImportShare = () => {
@@ -321,18 +371,49 @@ export default function SettingsScreen() {
           </TouchableOpacity>
         </View>
 
-        {/* Import/Export */}
+        {/* Friends Section */}
         <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Friends' Lists</Text>
           <TouchableOpacity
             style={styles.settingRow}
             onPress={handleImportShare}
             activeOpacity={0.7}
           >
-            <MaterialCommunityIcons name="import" size={20} color={theme.colors.primary} />
-            <Text style={[styles.settingLabel, { marginLeft: theme.spacing.md }]}>Import List via Share Code</Text>
+            <MaterialCommunityIcons name="account-plus" size={20} color={theme.colors.primary} />
+            <Text style={[styles.settingLabel, { marginLeft: theme.spacing.md }]}>Import a Friend's List</Text>
             <MaterialCommunityIcons name="chevron-right" size={20} color={theme.colors.textSecondary} />
           </TouchableOpacity>
+          {friendLists.length > 0 && friendLists.map(list => (
+            <View key={list.id} style={styles.friendRow}>
+              <View style={styles.friendInfo}>
+                <Text style={styles.friendName}>{list.importedFrom}</Text>
+                <Text style={styles.friendMeta}>
+                  {list.name}
+                  {list.importedAt ? `  ·  ${new Date(list.importedAt).toLocaleDateString()}` : ''}
+                </Text>
+              </View>
+              <View style={styles.friendActions}>
+                <TouchableOpacity
+                  style={styles.friendAction}
+                  onPress={() => handleReimportFriend(list.importedFrom!)}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                >
+                  <MaterialCommunityIcons name="refresh" size={20} color={theme.colors.primary} />
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.friendAction, { marginLeft: theme.spacing.sm }]}
+                  onPress={() => handleRemoveFriendList(list)}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                >
+                  <MaterialCommunityIcons name="trash-can-outline" size={20} color={theme.colors.error || '#dc3545'} />
+                </TouchableOpacity>
+              </View>
+            </View>
+          ))}
+        </View>
 
+        {/* Import/Export */}
+        <View style={styles.section}>
           <TouchableOpacity
             style={[styles.exportButton, styles.settingRow]}
             onPress={handleExportData}
@@ -462,5 +543,34 @@ const styles = StyleSheet.create({
     color: theme.colors.background,
     fontWeight: '600',
     marginLeft: theme.spacing.sm,
+  },
+  friendRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: theme.colors.surface,
+    padding: theme.spacing.md,
+    borderRadius: theme.borderRadius.md,
+    marginBottom: theme.spacing.sm,
+    ...theme.shadow,
+  },
+  friendInfo: {
+    flex: 1,
+  },
+  friendName: {
+    ...theme.typography.body,
+    color: theme.colors.text,
+    fontWeight: '600',
+  },
+  friendMeta: {
+    ...theme.typography.caption,
+    color: theme.colors.textSecondary,
+    marginTop: 2,
+  },
+  friendActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  friendAction: {
+    padding: theme.spacing.xs || 4,
   },
 });

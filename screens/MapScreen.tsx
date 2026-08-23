@@ -6,21 +6,39 @@ import {
   TouchableOpacity,
   StyleSheet,
   Image,
+  Modal,
+  FlatList,
+  Switch,
+  Alert,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Location from 'expo-location';
+import * as ImagePicker from 'expo-image-picker';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { RootStackParamList, Place } from '../types';
+import { RootStackParamList, Place, List } from '../types';
 import { theme } from '../lib/theme';
-import { getAllPlaces, createPlace, getCategory, getVisitsForPlace, getPlace, getListItems } from '../lib/db';
+import {
+  getAllPlaces,
+  createPlace,
+  getCategory,
+  getVisitsForPlace,
+  getPlace,
+  getListItems,
+  getAllLists,
+  addPlaceToList,
+  removePlaceFromList,
+  updatePlace,
+  getImportedFriendLists,
+} from '../lib/db';
 import { searchPlaces, extractCoordinates, formatAddress, NominatimResult } from '../lib/maps';
 import MapView from '../components/MapView';
 import PlaceSearchModal from '../components/PlaceSearchModal';
 import PlaceSaveModal from '../components/PlaceSaveModal';
 import PlaceInfoCard from '../components/PlaceInfoCard';
 import MapFilterModal, { MapFilters } from '../components/MapFilterModal';
+import AddToListModal from '../components/AddToListModal';
 
 type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
 
@@ -54,6 +72,16 @@ export default function MapScreen() {
   const [filters, setFilters] = useState<MapFilters>(DEFAULT_FILTERS);
   const [allPlaces, setAllPlaces] = useState<Place[]>([]);
   const [filteredPlaces, setFilteredPlaces] = useState<Place[]>([]);
+
+  // Add-to-list state
+  const [showAddToListModal, setShowAddToListModal] = useState(false);
+  const [modalAllLists, setModalAllLists] = useState<List[]>([]);
+  const [modalPlaceLists, setModalPlaceLists] = useState<List[]>([]);
+
+  // Friend lists panel state
+  const [showFriendPanel, setShowFriendPanel] = useState(false);
+  const [friendLists, setFriendLists] = useState<List[]>([]);
+  const [activeFriendListIds, setActiveFriendListIds] = useState<Set<string>>(new Set());
   
   // Calculate recenter button position
   const tabBarHeight = 80;
@@ -65,15 +93,23 @@ export default function MapScreen() {
     loadPlaces();
     // Try to get location silently in background (don't show errors on initial load)
     getCurrentLocation(false);
+    loadFriendLists();
   }, []);
 
   // Reload places when screen comes into focus (e.g., after editing a place)
   useEffect(() => {
     const unsubscribe = navigation.addListener('focus', () => {
       loadPlaces();
+      loadFriendLists();
     });
     return unsubscribe;
   }, [navigation]);
+
+  // Re-apply filters when active friend lists change
+  useEffect(() => {
+    const effectiveFilters = { ...filters, listIds: getEffectiveListIds() };
+    applyFilters(allPlaces, effectiveFilters);
+  }, [activeFriendListIds, filters, allPlaces]);
 
   const getCurrentLocation = async (showError = false) => {
     try {
@@ -205,7 +241,8 @@ export default function MapScreen() {
 
   const handleFiltersChange = (newFilters: MapFilters) => {
     setFilters(newFilters);
-    applyFilters(allPlaces, newFilters);
+    const effectiveFilters = { ...newFilters, listIds: [...new Set([...newFilters.listIds, ...Array.from(activeFriendListIds)])] };
+    applyFilters(allPlaces, effectiveFilters);
   };
 
   const clearFiltersAndReloadPlaces = async () => {
@@ -213,6 +250,98 @@ export default function MapScreen() {
     const loadedPlaces = await getAllPlaces();
     setAllPlaces(loadedPlaces);
     applyFilters(loadedPlaces, DEFAULT_FILTERS);
+  };
+
+  const handleOpenAddToList = async () => {
+    if (!selectedPlace) return;
+    try {
+      const allLists = await getAllLists();
+      const listsWithPlace: List[] = [];
+      for (const list of allLists) {
+        const items = await getListItems(list.id);
+        if (items.some(item => item.placeId === selectedPlace.id)) {
+          listsWithPlace.push(list);
+        }
+      }
+      setModalAllLists(allLists);
+      setModalPlaceLists(listsWithPlace);
+      setShowAddToListModal(true);
+    } catch (error) {
+      console.error('Failed to load lists:', error);
+    }
+  };
+
+  const handleToggleList = async (listId: string) => {
+    if (!selectedPlace) return;
+    try {
+      const isInList = modalPlaceLists.some(l => l.id === listId);
+      if (isInList) {
+        await removePlaceFromList(listId, selectedPlace.id);
+        setModalPlaceLists(prev => prev.filter(l => l.id !== listId));
+      } else {
+        await addPlaceToList(listId, selectedPlace.id);
+        const added = modalAllLists.find(l => l.id === listId);
+        if (added) setModalPlaceLists(prev => [...prev, added]);
+      }
+    } catch (error) {
+      console.error('Failed to toggle list:', error);
+    }
+  };
+
+  const handleAddImageFromMap = async () => {
+    if (!selectedPlace) return;
+    try {
+      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert('Permission needed', 'Please allow access to your photo library.');
+        return;
+      }
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: true,
+        aspect: [4, 3],
+        quality: 0.8,
+      });
+      if (!result.canceled && result.assets.length > 0) {
+        const uri = result.assets[0].uri;
+        await updatePlace(selectedPlace.id, { coverImageUri: uri });
+        setSelectedPlaceImage(uri);
+        // Refresh place data
+        const updated = await getPlace(selectedPlace.id);
+        if (updated) setSelectedPlace(updated);
+      }
+    } catch (error) {
+      console.error('Failed to add image:', error);
+      Alert.alert('Error', 'Failed to update photo.');
+    }
+  };
+
+  const loadFriendLists = async () => {
+    try {
+      const imported = await getImportedFriendLists();
+      setFriendLists(imported);
+    } catch (error) {
+      console.error('Failed to load friend lists:', error);
+    }
+  };
+
+  const handleToggleFriendList = (listId: string) => {
+    setActiveFriendListIds(prev => {
+      const next = new Set(prev);
+      if (next.has(listId)) {
+        next.delete(listId);
+      } else {
+        next.add(listId);
+      }
+      return next;
+    });
+  };
+
+  // Apply friend list filter on top of existing filters
+  const getEffectiveListIds = () => {
+    const friendIds = Array.from(activeFriendListIds);
+    const filterIds = filters.listIds;
+    return [...new Set([...filterIds, ...friendIds])];
   };
 
   const handleSearchSelect = async (result: NominatimResult) => {
@@ -341,6 +470,26 @@ export default function MapScreen() {
           onChangeText={setSearchQuery}
           onFocus={() => setShowSearchModal(true)}
         />
+        <TouchableOpacity
+          onPress={() => {
+            loadFriendLists();
+            setShowFriendPanel(true);
+          }}
+          style={{ marginRight: theme.spacing.sm }}
+        >
+          <View style={[styles.filterButton, activeFriendListIds.size > 0 && styles.filterButtonActive]}>
+            <MaterialCommunityIcons
+              name="account-group"
+              size={20}
+              color={activeFriendListIds.size > 0 ? theme.colors.primary : theme.colors.secondary}
+            />
+            {activeFriendListIds.size > 0 && (
+              <View style={styles.filterBadge}>
+                <Text style={styles.filterBadgeText}>{activeFriendListIds.size}</Text>
+              </View>
+            )}
+          </View>
+        </TouchableOpacity>
         <TouchableOpacity onPress={() => setShowFilterModal(true)}>
           <View style={styles.filterButton}>
             <MaterialCommunityIcons name="filter-variant" size={20} color={theme.colors.secondary} />
@@ -373,6 +522,8 @@ export default function MapScreen() {
             categoryName={selectedPlaceCategory}
             imageUri={selectedPlaceImage}
             onPress={handleInfoCardPress}
+            onAddToList={handleOpenAddToList}
+            onAddImage={handleAddImageFromMap}
           />
         )}
 
@@ -429,6 +580,66 @@ export default function MapScreen() {
         onClose={() => setShowFilterModal(false)}
         onApply={handleFiltersChange}
       />
+
+      {/* Add to List Modal */}
+      <AddToListModal
+        visible={showAddToListModal}
+        lists={modalAllLists}
+        placeLists={modalPlaceLists}
+        onToggle={handleToggleList}
+        onClose={() => setShowAddToListModal(false)}
+      />
+
+      {/* Friend Lists Panel */}
+      <Modal
+        visible={showFriendPanel}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowFriendPanel(false)}
+      >
+        <TouchableOpacity
+          style={styles.friendPanelOverlay}
+          activeOpacity={1}
+          onPress={() => setShowFriendPanel(false)}
+        >
+          <View style={styles.friendPanel}>
+            <View style={styles.friendPanelHandle} />
+            <View style={styles.friendPanelHeader}>
+              <Text style={styles.friendPanelTitle}>Friends' Lists</Text>
+              <TouchableOpacity onPress={() => setShowFriendPanel(false)}>
+                <MaterialCommunityIcons name="close" size={22} color={theme.colors.text} />
+              </TouchableOpacity>
+            </View>
+            {friendLists.length === 0 ? (
+              <Text style={styles.friendPanelEmpty}>
+                No imported friend lists yet.{'\n'}Import a share code in Settings.
+              </Text>
+            ) : (
+              <FlatList
+                data={friendLists}
+                keyExtractor={item => item.id}
+                renderItem={({ item }) => (
+                  <View style={styles.friendListRow}>
+                    <View style={styles.friendListInfo}>
+                      <Text style={styles.friendListName}>{item.name}</Text>
+                      {item.importedAt && (
+                        <Text style={styles.friendListMeta}>
+                          {new Date(item.importedAt).toLocaleDateString()}
+                        </Text>
+                      )}
+                    </View>
+                    <Switch
+                      value={activeFriendListIds.has(item.id)}
+                      onValueChange={() => handleToggleFriendList(item.id)}
+                      trackColor={{ false: theme.colors.border, true: theme.colors.primary }}
+                    />
+                  </View>
+                )}
+              />
+            )}
+          </View>
+        </TouchableOpacity>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -501,6 +712,9 @@ const styles = StyleSheet.create({
   filterButton: {
     position: 'relative',
   },
+  filterButtonActive: {
+    // Visual indicator that friend filter is active (handled by icon color)
+  },
   filterBadge: {
     position: 'absolute',
     top: -6,
@@ -518,5 +732,63 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontWeight: '700',
     fontSize: 10,
+  },
+  friendPanelOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.4)',
+    justifyContent: 'flex-end',
+  },
+  friendPanel: {
+    backgroundColor: theme.colors.background,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    paddingHorizontal: theme.spacing.lg,
+    paddingBottom: theme.spacing.xl,
+    maxHeight: '60%',
+  },
+  friendPanelHandle: {
+    width: 36,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: theme.colors.border,
+    alignSelf: 'center',
+    marginTop: theme.spacing.sm,
+    marginBottom: theme.spacing.md,
+  },
+  friendPanelHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: theme.spacing.md,
+  },
+  friendPanelTitle: {
+    ...theme.typography.h3,
+    color: theme.colors.text,
+  },
+  friendPanelEmpty: {
+    ...theme.typography.body,
+    color: theme.colors.textSecondary,
+    textAlign: 'center',
+    paddingVertical: theme.spacing.xl,
+  },
+  friendListRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: theme.spacing.md,
+    borderBottomWidth: 1,
+    borderBottomColor: theme.colors.border,
+  },
+  friendListInfo: {
+    flex: 1,
+  },
+  friendListName: {
+    ...theme.typography.body,
+    color: theme.colors.text,
+    fontWeight: '500',
+  },
+  friendListMeta: {
+    ...theme.typography.caption,
+    color: theme.colors.textSecondary,
+    marginTop: 2,
   },
 });

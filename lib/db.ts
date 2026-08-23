@@ -202,6 +202,17 @@ export async function initializeDatabase(): Promise<void> {
       }
     }
 
+    // Migration: Add importedFrom / importedAt to lists
+    for (const col of ['importedFrom TEXT', 'importedAt INTEGER']) {
+      try {
+        await db.execAsync(`ALTER TABLE lists ADD COLUMN ${col};`);
+      } catch (e: any) {
+        if (!e.message?.includes('duplicate column name')) {
+          console.warn('Migration warning:', e);
+        }
+      }
+    }
+
     // Migration: Add sync fields to existing tables
     const syncMigrations = [
       { table: 'author', columns: ['email TEXT', 'apiId TEXT', 'synced INTEGER NOT NULL DEFAULT 0', 'userId TEXT'] },
@@ -516,7 +527,7 @@ export async function deletePlace(placeId: string): Promise<void> {
 
 // ===== LIST QUERIES =====
 
-export async function createList(name: string, description?: string, category?: string, city?: string, userId?: string): Promise<List> {
+export async function createList(name: string, description?: string, category?: string, city?: string, userId?: string, importedFrom?: string, importedAt?: number): Promise<List> {
   const id = generateId();
   const now = Date.now();
   const list: List = { 
@@ -525,6 +536,8 @@ export async function createList(name: string, description?: string, category?: 
     description, 
     category, 
     city, 
+    importedFrom,
+    importedAt,
     apiId: undefined,
     synced: false,
     userId,
@@ -539,8 +552,8 @@ export async function createList(name: string, description?: string, category?: 
 
   if (!db) throw new Error('Database not initialized');
   await db.runAsync(
-    'INSERT INTO lists (id, name, description, category, city, apiId, synced, userId, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-    [id, name, description || null, category || null, city || null, null, 0, userId || null, now, now]
+    'INSERT INTO lists (id, name, description, category, city, importedFrom, importedAt, apiId, synced, userId, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    [id, name, description || null, category || null, city || null, importedFrom || null, importedAt || null, null, 0, userId || null, now, now]
   );
   return list;
 }
@@ -645,6 +658,22 @@ export async function deleteList(listId: string): Promise<void> {
   await db.runAsync('DELETE FROM list_items WHERE listId = ?', [listId]);
   // Then delete the list
   await db.runAsync('DELETE FROM lists WHERE id = ?', [listId]);
+}
+
+export async function getImportedFriendLists(): Promise<List[]> {
+  if (Platform.OS === 'web') {
+    const allLists = await indexedDB.getAllLists();
+    return allLists.filter(l => !!l.importedFrom).sort((a, b) => (b.importedAt || 0) - (a.importedAt || 0));
+  }
+
+  if (!db) throw new Error('Database not initialized');
+  const results = await db.getAllAsync(
+    'SELECT * FROM lists WHERE importedFrom IS NOT NULL ORDER BY importedAt DESC'
+  ) as any[];
+  return results.map(r => ({
+    ...r,
+    synced: Boolean(r.synced),
+  })) as List[];
 }
 
 // ===== LIST ITEM QUERIES =====

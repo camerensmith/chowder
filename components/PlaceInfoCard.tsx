@@ -10,9 +10,11 @@ interface PlaceInfoCardProps {
   categoryName?: string;
   imageUri?: string; // Optional image URI (e.g., from most recent visit)
   onPress: () => void;
+  onAddToList?: () => void;
+  onAddImage?: () => void;
 }
 
-export default function PlaceInfoCard({ place, categoryName, imageUri, onPress }: PlaceInfoCardProps) {
+export default function PlaceInfoCard({ place, categoryName, imageUri, onPress, onAddToList, onAddImage }: PlaceInfoCardProps) {
   const insets = useSafeAreaInsets();
   // Tab bar height is typically ~60-80px, position card pinned to bottom bar with minimal gap
   const tabBarHeight = 80;
@@ -133,9 +135,31 @@ export default function PlaceInfoCard({ place, categoryName, imageUri, onPress }
             </View>
           </View>
 
-          {/* Right column: Chevron */}
-          <View style={styles.chevronContainer}>
-            <MaterialCommunityIcons name="chevron-right" size={16} color="#999999" />
+          {/* Right column: Action buttons + Chevron */}
+          <View style={styles.actionsContainer}>
+            {onAddImage && (
+              <TouchableOpacity
+                style={styles.actionButton}
+                onPress={(e) => { e.stopPropagation?.(); onAddImage(); }}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                accessibilityLabel="Add photo"
+              >
+                <MaterialCommunityIcons name="camera-plus-outline" size={20} color={theme.colors.primary} />
+              </TouchableOpacity>
+            )}
+            {onAddToList && (
+              <TouchableOpacity
+                style={styles.actionButton}
+                onPress={(e) => { e.stopPropagation?.(); onAddToList(); }}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                accessibilityLabel="Add to list"
+              >
+                <MaterialCommunityIcons name="playlist-plus" size={20} color={theme.colors.primary} />
+              </TouchableOpacity>
+            )}
+            <View style={styles.chevronContainer}>
+              <MaterialCommunityIcons name="chevron-right" size={16} color="#999999" />
+            </View>
           </View>
         </View>
       </TouchableOpacity>
@@ -227,5 +251,15 @@ const styles = StyleSheet.create({
   chevronContainer: {
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  actionsContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  actionButton: {
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 2,
   },
 });

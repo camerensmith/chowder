@@ -39,6 +39,8 @@ export interface List {
   category?: string; // e.g., "Pho", "Pizza"
   city?: string; // e.g., "NYC", "Bay Area"
   overallRating?: number; // Calculated from places
+  importedFrom?: string; // Friend's display name if this list was imported
+  importedAt?: number; // Timestamp when imported
   apiId?: string;
   synced: boolean;
   lastSyncedAt?: number;
@@ -141,7 +143,7 @@ export type RootStackParamList = {
   Login: undefined;
   ListDetail: { listId: string };
   PlaceDetail: { placeId: string };
-  ShareViewer: { code?: string };
+  ShareViewer: { code?: string; friendName?: string };
   CategoryManagement: undefined;
   TileProvider: undefined;
 };
