@@ -143,7 +143,7 @@ export type RootStackParamList = {
   Login: undefined;
   ListDetail: { listId: string };
   PlaceDetail: { placeId: string };
-  ShareViewer: { code?: string };
+  ShareViewer: { code?: string; friendName?: string };
   CategoryManagement: undefined;
   TileProvider: undefined;
 };

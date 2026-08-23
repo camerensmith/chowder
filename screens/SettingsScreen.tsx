@@ -71,7 +71,7 @@ export default function SettingsScreen() {
         { text: 'Cancel', style: 'cancel' },
         {
           text: 'Import',
-          onPress: () => navigation.navigate('ShareViewer', {}),
+          onPress: () => navigation.navigate('ShareViewer', { friendName }),
         },
       ]
     );

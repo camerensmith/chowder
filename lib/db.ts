@@ -207,7 +207,7 @@ export async function initializeDatabase(): Promise<void> {
       try {
         await db.execAsync(`ALTER TABLE lists ADD COLUMN ${col};`);
       } catch (e: any) {
-        if (!e.message?.includes('duplicate column')) {
+        if (!e.message?.includes('duplicate column name')) {
           console.warn('Migration warning:', e);
         }
       }

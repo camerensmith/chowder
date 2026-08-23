@@ -24,7 +24,7 @@ type RoutePropType = RouteProp<RootStackParamList, 'ShareViewer'>;
 export default function ShareViewerScreen() {
   const route = useRoute<RoutePropType>();
   const navigation = useNavigation<NavigationProp>();
-  const { code } = route.params || {};
+  const { code, friendName } = route.params || {};
   const [shareCode, setShareCode] = useState(code || '');
   const [payload, setPayload] = useState<SharePayload | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -62,13 +62,6 @@ export default function ShareViewerScreen() {
     try {
       setIsImporting(true);
 
-      // Remove existing imported lists from this friend so re-import replaces them
-      const existingLists = await getAllLists();
-      const oldFriendLists = existingLists.filter(l => l.importedFrom === payload.authorName);
-      for (const old of oldFriendLists) {
-        await deleteList(old.id);
-      }
-
       // Create new list tagged with the friend's name
       const newList = await createList(
         `${payload.title} (from ${payload.authorName})`,
@@ -93,6 +86,15 @@ export default function ShareViewerScreen() {
         } catch (error) {
           console.error(`Failed to add place ${placeData.name}:`, error);
         }
+      }
+
+      // Remove old imported lists from the same friend AFTER the new list is saved
+      const existingLists = await getAllLists();
+      const oldFriendLists = existingLists.filter(
+        l => l.importedFrom === payload.authorName && l.id !== newList.id
+      );
+      for (const old of oldFriendLists) {
+        await deleteList(old.id);
       }
 
       Alert.alert(
@@ -133,9 +135,13 @@ export default function ShareViewerScreen() {
             size={64}
             color={theme.colors.primary}
           />
-          <Text style={styles.prompt}>Have a share code?</Text>
+          <Text style={styles.prompt}>
+            {friendName ? `Re-import ${friendName}'s list` : 'Have a share code?'}
+          </Text>
           <Text style={styles.subtitle}>
-            Enter the code sent to you to view and import the list
+            {friendName
+              ? `Paste the new share code from ${friendName}. Their existing list will be replaced.`
+              : 'Enter the code sent to you to view and import the list'}
           </Text>
 
           <TextInput

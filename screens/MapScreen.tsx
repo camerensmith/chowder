@@ -109,7 +109,7 @@ export default function MapScreen() {
   useEffect(() => {
     const effectiveFilters = { ...filters, listIds: getEffectiveListIds() };
     applyFilters(allPlaces, effectiveFilters);
-  }, [activeFriendListIds]);
+  }, [activeFriendListIds, filters, allPlaces]);
 
   const getCurrentLocation = async (showError = false) => {
     try {
