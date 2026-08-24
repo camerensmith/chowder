@@ -23,6 +23,7 @@ import { getList, getListItems, getAllPlaces, addPlaceToList, updateList } from 
 import { List, Place } from '../types';
 import ShareCodeGenerator from '../components/ShareCodeGenerator';
 import PlaceSelectModal from '../components/PlaceSelectModal';
+import { getRatingScalePreference, toDisplayRating, RatingScale } from '../lib/ratingScale';
 
 type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
 type RoutePropType = RouteProp<RootStackParamList, 'ListDetail'>;
@@ -38,9 +39,11 @@ export default function ListDetailScreen() {
   const [showPlaceSelectModal, setShowPlaceSelectModal] = useState(false);
   const [showRenameModal, setShowRenameModal] = useState(false);
   const [renameValue, setRenameValue] = useState('');
+  const [ratingScale, setRatingScale] = useState<RatingScale>(5);
 
   useEffect(() => {
     loadList();
+    getRatingScalePreference().then(setRatingScale);
   }, [listId]);
 
   const loadList = async () => {
@@ -117,7 +120,7 @@ export default function ListDetailScreen() {
                   color={theme.colors.star}
                 />
               ))}
-              <Text style={styles.ratingText}>{item.overallRating.toFixed(1)}</Text>
+              <Text style={styles.ratingText}>{toDisplayRating(item.overallRating, ratingScale).toFixed(1)}</Text>
             </View>
           )}
         </View>

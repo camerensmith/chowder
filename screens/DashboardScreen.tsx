@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -6,14 +6,16 @@ import {
   StyleSheet,
   TouchableOpacity,
   Image,
+  RefreshControl,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
 import Svg, { Circle } from 'react-native-svg';
 import { theme } from '../lib/theme';
-import { getAllPlaces, getAllVisits, getAllLists, getAllDishes } from '../lib/db';
-import { Place, Visit, List, Dish } from '../types';
+import { getAllPlaces, getAllVisits, getAllLists, getAllDishes, getAllListItems } from '../lib/db';
+import { Place, Visit, List, Dish, ListItem } from '../types';
+import { getRatingScalePreference, toDisplayRating, RatingScale } from '../lib/ratingScale';
 
 type TimeRange = 'Week' | 'Month' | 'Year';
 
@@ -22,7 +24,7 @@ interface StatCardProps {
   label: string;
   sublabel?: string;
   color?: string;
-  progress?: number; // 0–1, defaults to 0.75 (decorative)
+  progress?: number;
 }
 
 function CircularStatCard({ value, label, sublabel, color = theme.colors.primary, progress = 0.75 }: StatCardProps) {
@@ -31,21 +33,12 @@ function CircularStatCard({ value, label, sublabel, color = theme.colors.primary
   const radius = (size - strokeWidth) / 2;
   const circumference = 2 * Math.PI * radius;
   const arcLength = Math.max(0, Math.min(1, progress)) * circumference;
-  
+
   return (
     <View style={styles.statCard}>
       <View style={styles.circleContainer}>
         <Svg width={size} height={size}>
-          {/* Background circle */}
-          <Circle
-            cx={size / 2}
-            cy={size / 2}
-            r={radius}
-            stroke="#D8D8D8"
-            strokeWidth={strokeWidth}
-            fill={theme.colors.background}
-          />
-          {/* Foreground circle (ring) */}
+          <Circle cx={size / 2} cy={size / 2} r={radius} stroke="#D8D8D8" strokeWidth={strokeWidth} fill={theme.colors.background} />
           <Circle
             cx={size / 2}
             cy={size / 2}
@@ -75,7 +68,10 @@ export default function DashboardScreen() {
   const [visits, setVisits] = useState<Visit[]>([]);
   const [lists, setLists] = useState<List[]>([]);
   const [dishes, setDishes] = useState<Dish[]>([]);
+  const [listItems, setListItems] = useState<ListItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [showDetailedView, setShowDetailedView] = useState(false);
+  const [ratingScale, setRatingScale] = useState<RatingScale>(5);
 
   useFocusEffect(
     React.useCallback(() => {
@@ -84,17 +80,22 @@ export default function DashboardScreen() {
   );
 
   const loadData = async () => {
+    setIsLoading(true);
     try {
-      const [placesData, visitsData, listsData, dishesData] = await Promise.all([
+      const [placesData, visitsData, listsData, dishesData, listItemsData, scale] = await Promise.all([
         getAllPlaces(),
         getAllVisits(),
         getAllLists(),
         getAllDishes(),
+        getAllListItems(),
+        getRatingScalePreference(),
       ]);
       setPlaces(placesData);
       setVisits(visitsData);
       setLists(listsData);
       setDishes(dishesData);
+      setListItems(listItemsData);
+      setRatingScale(scale);
     } catch (error) {
       console.error('Failed to load dashboard data:', error);
     } finally {
@@ -102,7 +103,6 @@ export default function DashboardScreen() {
     }
   };
 
-  // Calculate time range cutoff
   const getTimeRangeCutoff = (): number => {
     const now = Date.now();
     const day = 24 * 60 * 60 * 1000;
@@ -119,14 +119,9 @@ export default function DashboardScreen() {
   };
 
   const cutoff = getTimeRangeCutoff();
-
-  // Stat 1: Restaurants Added (time-filtered)
   const restaurantsAdded = places.filter(p => p.createdAt >= cutoff).length;
-
-  // Stat 2: Check-Ins (time-filtered)
   const checkIns = visits.filter(v => v.createdAt >= cutoff).length;
 
-  // Stat 3: Average Score (time-filtered)
   const timeFilteredVisits = visits.filter(v => v.createdAt >= cutoff);
   const timeFilteredVisitIds = new Set(timeFilteredVisits.map(v => v.id));
   const timeFilteredDishes = dishes.filter(d => timeFilteredVisitIds.has(d.visitId));
@@ -135,15 +130,11 @@ export default function DashboardScreen() {
     { sum: 0, count: 0 }
   );
   const avgScore = count > 0 ? sum / count : 0;
-  const avgScoreDisplay = count > 0 ? avgScore.toFixed(1) : '—';
+  const avgScoreDisplay = count > 0 ? toDisplayRating(avgScore, ratingScale).toFixed(1) : '—';
 
-  // Stat 4: Lists Created (total, no time filter)
   const listsCreated = lists.length;
-
-  // Stat 5: Total Check-Ins (all-time)
   const totalCheckIns = visits.length;
 
-  // Stat 6: Favorite Meal (most frequent dish name)
   const dishCounts = new Map<string, { count: number; lastDate: number }>();
   dishes.forEach(d => {
     const existing = dishCounts.get(d.name) || { count: 0, lastDate: 0 };
@@ -152,7 +143,7 @@ export default function DashboardScreen() {
       lastDate: Math.max(existing.lastDate, d.createdAt),
     });
   });
-  
+
   let favoriteMeal = '—';
   let maxCount = 0;
   let maxDate = 0;
@@ -164,32 +155,58 @@ export default function DashboardScreen() {
     }
   });
 
-  // Stat 7: Top 5 Restaurants (by meal count, min 2 meals)
-  // Create lookup maps for better performance
   const visitsById = new Map(visits.map(v => [v.id, v]));
   const placesById = new Map(places.map(p => [p.id, p]));
-  
-  const restaurantMealCounts = new Map<string, { name: string; count: number }>();
-  
-  // Count meals per restaurant
+  const restaurantMealCounts = new Map<string, { id: string; name: string; count: number }>();
+
   dishes.forEach(dish => {
     const visit = visitsById.get(dish.visitId);
-    if (visit) {
-      const place = placesById.get(visit.placeId);
-      if (place) {
-        const existing = restaurantMealCounts.get(place.id) || { name: place.name, count: 0 };
-        restaurantMealCounts.set(place.id, {
-          name: place.name,
-          count: existing.count + 1,
-        });
-      }
-    }
+    if (!visit) return;
+    const place = placesById.get(visit.placeId);
+    if (!place) return;
+
+    const existing = restaurantMealCounts.get(place.id) || { id: place.id, name: place.name, count: 0 };
+    restaurantMealCounts.set(place.id, { ...existing, count: existing.count + 1 });
   });
 
   const topRestaurants = Array.from(restaurantMealCounts.values())
     .filter(r => r.count >= 2)
     .sort((a, b) => b.count - a.count)
     .slice(0, 5);
+
+  const recentRated = useMemo(() => {
+    const placeToListNames = new Map<string, string[]>();
+    listItems.forEach(item => {
+      const list = lists.find(l => l.id === item.listId);
+      if (!list) return;
+      const existing = placeToListNames.get(item.placeId) || [];
+      if (!existing.includes(list.name)) existing.push(list.name);
+      placeToListNames.set(item.placeId, existing);
+    });
+
+    return [...dishes]
+      .sort((a, b) => b.createdAt - a.createdAt)
+      .filter(d => d.rating > 0)
+      .map(dish => {
+        const visit = visitsById.get(dish.visitId);
+        if (!visit) return null;
+        const place = placesById.get(visit.placeId);
+        if (!place) return null;
+
+        return {
+          id: dish.id,
+          dishName: dish.name,
+          rating: dish.rating,
+          note: dish.notes || visit.notes,
+          listNames: placeToListNames.get(place.id) || [],
+          placeName: place.name,
+          coverImageUri: place.coverImageUri,
+          createdAt: dish.createdAt,
+        };
+      })
+      .filter((item): item is NonNullable<typeof item> => !!item)
+      .slice(0, 3);
+  }, [dishes, listItems, lists, visitsById, placesById]);
 
   const renderTimeRangeToggle = () => (
     <View style={styles.toggleContainer}>
@@ -216,13 +233,122 @@ export default function DashboardScreen() {
     </View>
   );
 
+  const renderRecentRated = () => {
+    if (recentRated.length === 0) return null;
+
+    return (
+      <View style={styles.recentSection}>
+        <View style={styles.sectionDivider} />
+        <Text style={styles.sectionTitle}>Recently Rated</Text>
+        {recentRated.map(item => (
+          <View key={item.id} style={styles.recentRow}>
+            <Image
+              source={item.coverImageUri ? { uri: item.coverImageUri } : require('../assets/placeholder.png')}
+              style={styles.recentImage}
+              resizeMode="cover"
+            />
+            <View style={styles.recentTextContainer}>
+              <Text style={styles.recentTitle} numberOfLines={1}>
+                {item.placeName} · {item.dishName}
+              </Text>
+              <Text style={styles.recentRating}>
+                {toDisplayRating(item.rating, ratingScale).toFixed(1)} / {ratingScale}
+              </Text>
+              {item.note ? <Text style={styles.recentNote} numberOfLines={2}>{item.note}</Text> : null}
+              {item.listNames.length > 0 ? (
+                <Text style={styles.recentList} numberOfLines={1}>In lists: {item.listNames.join(', ')}</Text>
+              ) : null}
+            </View>
+          </View>
+        ))}
+      </View>
+    );
+  };
+
+  const renderDetailView = () => {
+    const recentVisits = [...visits]
+      .sort((a, b) => b.createdAt - a.createdAt)
+      .slice(0, 10)
+      .map(visit => ({
+        ...visit,
+        placeName: placesById.get(visit.placeId)?.name || 'Unknown place',
+      }));
+
+    const recentPlaces = [...places]
+      .sort((a, b) => b.createdAt - a.createdAt)
+      .slice(0, 10);
+
+    return (
+      <>
+        <View style={styles.header}>
+          <TouchableOpacity onPress={() => setShowDetailedView(false)}>
+            <MaterialCommunityIcons name="arrow-left" size={28} color={theme.colors.primary} />
+          </TouchableOpacity>
+          <View style={styles.logoContainer}>
+            <Image source={require('../assets/centericon.png')} style={styles.logoImage} resizeMode="contain" />
+          </View>
+          <View style={styles.headerSpacer} />
+        </View>
+
+        <ScrollView
+          contentContainerStyle={styles.scrollContent}
+          showsVerticalScrollIndicator={false}
+          refreshControl={<RefreshControl refreshing={isLoading} onRefresh={loadData} tintColor={theme.colors.primary} />}
+        >
+          <View style={styles.titleContainer}>
+            <Text style={styles.title}>Dashboard Details</Text>
+          </View>
+
+          {renderRecentRated()}
+
+          <View style={styles.detailSection}>
+            <Text style={styles.sectionTitle}>Recent Check-Ins</Text>
+            {recentVisits.map(visit => (
+              <View key={visit.id} style={styles.detailRow}>
+                <Text style={styles.detailTitle}>{visit.placeName}</Text>
+                <Text style={styles.detailMeta}>{new Date(visit.createdAt).toLocaleDateString()}</Text>
+              </View>
+            ))}
+          </View>
+
+          <View style={styles.detailSection}>
+            <Text style={styles.sectionTitle}>Recently Added Places</Text>
+            {recentPlaces.map(place => (
+              <View key={place.id} style={styles.detailRow}>
+                <Text style={styles.detailTitle}>{place.name}</Text>
+                <Text style={styles.detailMeta}>{new Date(place.createdAt).toLocaleDateString()}</Text>
+              </View>
+            ))}
+          </View>
+
+          {topRestaurants.length > 0 && (
+            <View style={styles.detailSection}>
+              <Text style={styles.sectionTitle}>Top Restaurants</Text>
+              {topRestaurants.map((restaurant, index) => (
+                <View key={restaurant.id} style={styles.detailRow}>
+                  <Text style={styles.detailTitle}>#{index + 1} {restaurant.name}</Text>
+                  <Text style={styles.detailMeta}>{restaurant.count} meals</Text>
+                </View>
+              ))}
+            </View>
+          )}
+        </ScrollView>
+      </>
+    );
+  };
+
+  if (showDetailedView) {
+    return (
+      <SafeAreaView style={styles.container} edges={['top']}>
+        {renderDetailView()}
+      </SafeAreaView>
+    );
+  }
+
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
-      {/* Header */}
       <View style={styles.header}>
-        <TouchableOpacity onPress={loadData}>
-          <MaterialCommunityIcons name="refresh" size={28} color={theme.colors.primary} />
-        </TouchableOpacity>
+        <View style={styles.headerSpacer} />
         <View style={styles.logoContainer}>
           <Image source={require('../assets/centericon.png')} style={styles.logoImage} resizeMode="contain" />
         </View>
@@ -232,58 +358,49 @@ export default function DashboardScreen() {
       <ScrollView
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
+        refreshControl={<RefreshControl refreshing={isLoading} onRefresh={loadData} tintColor={theme.colors.primary} />}
       >
-        {/* Title */}
         <View style={styles.titleContainer}>
           <Text style={styles.title}>Dashboard</Text>
         </View>
 
-        {/* Time Range Toggle */}
         {renderTimeRangeToggle()}
 
-        {/* Stats Grid */}
         <View style={styles.statsGrid}>
-          <CircularStatCard
-            value={restaurantsAdded}
-            label="Restaurants Added"
-            sublabel={`This ${timeRange}`}
-          />
-          <CircularStatCard
-            value={checkIns}
-            label="Check-Ins"
-            sublabel={`This ${timeRange}`}
-          />
-          <CircularStatCard
-            value={avgScoreDisplay}
-            label="Avg Rating"
-            sublabel={`This ${timeRange}`}
-            progress={count > 0 ? avgScore / 5 : 0}
-            color={theme.colors.star}
-          />
-          <CircularStatCard
-            value={listsCreated}
-            label="Lists"
-            sublabel="All Time"
-          />
-          <CircularStatCard
-            value={totalCheckIns}
-            label="Total Visits"
-            sublabel="All Time"
-          />
-          <CircularStatCard
-            value={favoriteMeal}
-            label="Favorite Meal"
-            sublabel="All Time"
-          />
+          <TouchableOpacity onPress={() => setShowDetailedView(true)} activeOpacity={0.8}>
+            <CircularStatCard value={restaurantsAdded} label="Restaurants Added" sublabel={`This ${timeRange}`} />
+          </TouchableOpacity>
+          <TouchableOpacity onPress={() => setShowDetailedView(true)} activeOpacity={0.8}>
+            <CircularStatCard value={checkIns} label="Check-Ins" sublabel={`This ${timeRange}`} />
+          </TouchableOpacity>
+          <TouchableOpacity onPress={() => setShowDetailedView(true)} activeOpacity={0.8}>
+            <CircularStatCard
+              value={avgScoreDisplay}
+              label="Avg Rating"
+              sublabel={`This ${timeRange}`}
+              progress={count > 0 ? avgScore / 5 : 0}
+              color={theme.colors.star}
+            />
+          </TouchableOpacity>
+          <TouchableOpacity onPress={() => setShowDetailedView(true)} activeOpacity={0.8}>
+            <CircularStatCard value={listsCreated} label="Lists" sublabel="All Time" />
+          </TouchableOpacity>
+          <TouchableOpacity onPress={() => setShowDetailedView(true)} activeOpacity={0.8}>
+            <CircularStatCard value={totalCheckIns} label="Total Visits" sublabel="All Time" />
+          </TouchableOpacity>
+          <TouchableOpacity onPress={() => setShowDetailedView(true)} activeOpacity={0.8}>
+            <CircularStatCard value={favoriteMeal} label="Favorite Meal" sublabel="All Time" />
+          </TouchableOpacity>
         </View>
 
-        {/* Top 5 Restaurants */}
+        {renderRecentRated()}
+
         {topRestaurants.length > 0 && (
-          <View style={styles.topRestaurantsSection}>
+          <TouchableOpacity style={styles.topRestaurantsSection} onPress={() => setShowDetailedView(true)} activeOpacity={0.9}>
             <View style={styles.sectionDivider} />
             <Text style={styles.sectionTitle}>Top 5 Restaurants</Text>
             {topRestaurants.map((restaurant, index) => (
-              <View key={index} style={styles.restaurantRow}>
+              <View key={restaurant.id} style={styles.restaurantRow}>
                 <View style={styles.rankBadge}>
                   <Text style={styles.rankBadgeText}>#{index + 1}</Text>
                 </View>
@@ -295,7 +412,7 @@ export default function DashboardScreen() {
                 </Text>
               </View>
             ))}
-          </View>
+          </TouchableOpacity>
         )}
       </ScrollView>
     </SafeAreaView>
@@ -372,7 +489,7 @@ const styles = StyleSheet.create({
     gap: theme.spacing.md,
   },
   statCard: {
-    width: '47%',
+    width: 160,
     alignItems: 'center',
     backgroundColor: theme.colors.surface,
     borderRadius: theme.borderRadius.md,
@@ -409,6 +526,49 @@ const styles = StyleSheet.create({
     ...theme.typography.caption,
     color: theme.colors.textSecondary,
     marginTop: theme.spacing.xs,
+  },
+  recentSection: {
+    marginHorizontal: theme.spacing.lg,
+    marginTop: theme.spacing.md,
+  },
+  recentRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: theme.colors.surface,
+    borderRadius: theme.borderRadius.md,
+    padding: theme.spacing.md,
+    marginBottom: theme.spacing.sm,
+    ...theme.shadow,
+  },
+  recentImage: {
+    width: 44,
+    height: 44,
+    borderRadius: 8,
+    marginRight: theme.spacing.md,
+  },
+  recentTextContainer: {
+    flex: 1,
+  },
+  recentTitle: {
+    ...theme.typography.body,
+    color: theme.colors.text,
+    fontWeight: '600',
+  },
+  recentRating: {
+    ...theme.typography.bodySmall,
+    color: theme.colors.textSecondary,
+    marginTop: 2,
+  },
+  recentNote: {
+    ...theme.typography.caption,
+    color: theme.colors.textSecondary,
+    marginTop: 2,
+    fontStyle: 'italic',
+  },
+  recentList: {
+    ...theme.typography.caption,
+    color: theme.colors.primary,
+    marginTop: 2,
   },
   topRestaurantsSection: {
     marginHorizontal: theme.spacing.lg,
@@ -459,5 +619,26 @@ const styles = StyleSheet.create({
     ...theme.typography.bodySmall,
     color: theme.colors.textSecondary,
     fontWeight: '400',
+  },
+  detailSection: {
+    marginHorizontal: theme.spacing.lg,
+    marginTop: theme.spacing.md,
+  },
+  detailRow: {
+    backgroundColor: theme.colors.surface,
+    borderRadius: theme.borderRadius.md,
+    padding: theme.spacing.md,
+    marginBottom: theme.spacing.sm,
+    ...theme.shadow,
+  },
+  detailTitle: {
+    ...theme.typography.body,
+    color: theme.colors.text,
+    fontWeight: '600',
+  },
+  detailMeta: {
+    ...theme.typography.caption,
+    color: theme.colors.textSecondary,
+    marginTop: 2,
   },
 });

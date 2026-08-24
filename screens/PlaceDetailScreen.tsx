@@ -42,6 +42,7 @@ import DishEditModal from '../components/DishEditModal';
 import VisitEditModal from '../components/VisitEditModal';
 import TagManager from '../components/TagManager';
 import DraggableStarRating from '../components/DraggableStarRating';
+import { getRatingScalePreference, toDisplayRating, toInternalRating, RatingScale } from '../lib/ratingScale';
 
 type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
 type RoutePropType = RouteProp<RootStackParamList, 'PlaceDetail'>;
@@ -65,6 +66,7 @@ export default function PlaceDetailScreen() {
   const [editingVisit, setEditingVisit] = useState<Visit | null>(null);
   const [mainImageUri, setMainImageUri] = useState<string | undefined>(undefined);
   const [categoryName, setCategoryName] = useState<string | undefined>(undefined);
+  const [ratingScale, setRatingScale] = useState<RatingScale>(5);
 
   useEffect(() => {
     loadPlace();
@@ -72,6 +74,8 @@ export default function PlaceDetailScreen() {
 
   const loadPlace = async () => {
     try {
+      const scale = await getRatingScalePreference();
+      setRatingScale(scale);
       const placeData = await getPlace(placeId);
       if (!placeData) {
         navigation.goBack();
@@ -152,6 +156,21 @@ export default function PlaceDetailScreen() {
   };
 
   const handleDelete = () => {
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      const confirmed = window.confirm(`Delete "${place?.name}"? This action cannot be undone.`);
+      if (!confirmed) return;
+      (async () => {
+        try {
+          await deletePlace(placeId);
+          navigation.goBack();
+        } catch (error) {
+          console.error('Failed to delete place:', error);
+          Alert.alert('Error', 'Failed to delete place');
+        }
+      })();
+      return;
+    }
+
     Alert.alert(
       'Delete Place',
       `Are you sure you want to delete "${place?.name}"? This action cannot be undone.`,
@@ -323,7 +342,7 @@ export default function PlaceDetailScreen() {
     }
     
     try {
-      await updatePlace(placeId, { overallRatingManual: newRating });
+      await updatePlace(placeId, { overallRatingManual: toInternalRating(newRating, ratingScale) });
       await loadPlace();
     } catch (error) {
       console.error('Failed to update rating:', error);
@@ -360,10 +379,11 @@ export default function PlaceDetailScreen() {
     if (interactive) {
       return (
         <DraggableStarRating
-          rating={rating || 0}
+          rating={toDisplayRating(rating || 0, ratingScale)}
           onRatingChange={handleRatingChange}
           size={24}
           disabled={false}
+          maxRating={ratingScale}
         />
       );
     }
@@ -457,7 +477,7 @@ export default function PlaceDetailScreen() {
                   return (
                     <>
                       {renderStars(displayRating, isInteractive)}
-                      <Text style={styles.ratingText}>{displayRating.toFixed(1)}</Text>
+                      <Text style={styles.ratingText}>{toDisplayRating(displayRating, ratingScale).toFixed(1)}</Text>
                     </>
                   );
                 }
@@ -535,7 +555,7 @@ export default function PlaceDetailScreen() {
                         <Text style={styles.dishName}>{dish.name}</Text>
                         <View style={styles.dishRatingContainer}>
                           {renderStars(dish.rating, false)}
-                          <Text style={styles.dishRatingText}>{dish.rating.toFixed(1)}</Text>
+                          <Text style={styles.dishRatingText}>{toDisplayRating(dish.rating, ratingScale).toFixed(1)}</Text>
                         </View>
                       </View>
                       {dish.notes && <Text style={styles.dishNotes}>{dish.notes}</Text>}

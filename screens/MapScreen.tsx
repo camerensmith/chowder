@@ -32,7 +32,7 @@ import {
   updatePlace,
   getImportedFriendLists,
 } from '../lib/db';
-import { searchPlaces, extractCoordinates, formatAddress, reverseGeocodeDetailed, NominatimResult } from '../lib/maps';
+import { searchPlaces, extractCoordinates, reverseGeocodeDetailed, NominatimResult } from '../lib/maps';
 import MapView from '../components/MapView';
 import PlaceSearchModal from '../components/PlaceSearchModal';
 import PlaceSaveModal from '../components/PlaceSaveModal';
@@ -163,6 +163,11 @@ export default function MapScreen() {
   const loadPlaces = async () => {
     try {
       const loadedPlaces = await getAllPlaces();
+      if (selectedPlace && !loadedPlaces.some(place => place.id === selectedPlace.id)) {
+        setSelectedPlace(null);
+        setSelectedPlaceCategory(undefined);
+        setSelectedPlaceImage(undefined);
+      }
       setAllPlaces(loadedPlaces);
       applyFilters(loadedPlaces, filters);
     } catch (error) {
@@ -362,17 +367,14 @@ export default function MapScreen() {
   const handleSearchSelect = async (result: NominatimResult) => {
     try {
       const coords = extractCoordinates(result);
-      const address = formatAddress(result);
-      // Show save modal with pre-filled data from search result
-      setClickedLocation({ latitude: coords.latitude, longitude: coords.longitude });
-      setPreFillName(result.name);
-      setPreFillAddress(address);
+      // Search selection should recenter map only (no implicit add flow)
+      setSelectedPlace(null);
+      setPendingPin(null);
+      setPendingAddress(undefined);
+      setPendingRecommendedName(undefined);
+      setRecenterTarget({ lat: coords.latitude, lng: coords.longitude });
       setShowSearchModal(false);
       setSearchQuery('');
-      // Show save modal after a brief delay to allow search modal to close
-      setTimeout(() => {
-        setShowSaveModal(true);
-      }, 100);
     } catch (error) {
       console.error('Failed to process search result:', error);
     }

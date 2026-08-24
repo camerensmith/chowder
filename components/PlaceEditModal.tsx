@@ -18,6 +18,7 @@ import { theme } from '../lib/theme';
 import { getCategoriesByType } from '../lib/db';
 import DraggableStarRating from './DraggableStarRating';
 import { persistImageLocally, uploadToCloudflare } from '../lib/imageStorage';
+import { getRatingScalePreference, toDisplayRating, toInternalRating, RatingScale } from '../lib/ratingScale';
 
 interface PlaceEditModalProps {
   visible: boolean;
@@ -37,6 +38,7 @@ export default function PlaceEditModal({ visible, place, onClose, onSave }: Plac
   const [overallRatingManual, setOverallRatingManual] = useState<number | undefined>(undefined);
   const [categories, setCategories] = useState<Category[]>([]);
   const [showCategoryPicker, setShowCategoryPicker] = useState(false);
+  const [ratingScale, setRatingScale] = useState<RatingScale>(5);
 
   useEffect(() => {
     if (visible && place) {
@@ -49,8 +51,14 @@ export default function PlaceEditModal({ visible, place, onClose, onSave }: Plac
       setRatingMode(place.ratingMode || 'overall');
       setOverallRatingManual(place.overallRatingManual);
       loadCategories();
+      loadRatingScale();
     }
   }, [visible, place]);
+
+  const loadRatingScale = async () => {
+    const scale = await getRatingScalePreference();
+    setRatingScale(scale);
+  };
 
   const loadCategories = async () => {
     try {
@@ -154,7 +162,9 @@ export default function PlaceEditModal({ visible, place, onClose, onSave }: Plac
       coverImageUri: imageUri, // Save as cover image
       cloudflareImageId,
       ratingMode,
-      overallRatingManual: ratingMode === 'overall' && rating ? rating : undefined,
+      overallRatingManual: ratingMode === 'overall' && rating !== undefined
+        ? toInternalRating(rating, ratingScale)
+        : undefined,
     });
     onClose();
   };
@@ -286,13 +296,16 @@ export default function PlaceEditModal({ visible, place, onClose, onSave }: Plac
                 <Text style={styles.label}>Overall Rating</Text>
                 <View style={styles.ratingContainer}>
                   <DraggableStarRating
-                    rating={overallRatingManual || rating || 0}
+                    rating={overallRatingManual !== undefined
+                      ? toDisplayRating(overallRatingManual, ratingScale)
+                      : toDisplayRating(rating || 0, ratingScale)}
                     onRatingChange={(newRating) => {
                       setRating(newRating);
                       setOverallRatingManual(newRating);
                     }}
                     size={32}
                     disabled={false}
+                    maxRating={ratingScale}
                   />
                 </View>
                 {rating && (

@@ -16,6 +16,7 @@ import { Dish, Category } from '../types';
 import { theme } from '../lib/theme';
 import { getCategoriesByType } from '../lib/db';
 import DraggableStarRating from './DraggableStarRating';
+import { getRatingScalePreference, toDisplayRating, toInternalRating, RatingScale } from '../lib/ratingScale';
 
 interface DishEditModalProps {
   visible: boolean;
@@ -33,22 +34,27 @@ export default function DishEditModal({ visible, dish, visitId, onSave, onClose 
   const [imageUri, setImageUri] = useState<string | undefined>(undefined);
   const [categories, setCategories] = useState<Category[]>([]);
   const [showCategoryPicker, setShowCategoryPicker] = useState(false);
+  const [ratingScale, setRatingScale] = useState<RatingScale>(5);
 
   useEffect(() => {
     if (visible) {
-      if (dish) {
-        setName(dish.name);
-        setRating(dish.rating);
-        setCategoryId(dish.categoryId);
-        setNotes(dish.notes || '');
-        setImageUri(dish.photoUri);
-      } else {
-        setName('');
-        setRating(0);
-        setCategoryId(undefined);
-        setNotes('');
-        setImageUri(undefined);
-      }
+      (async () => {
+        const scale = await getRatingScalePreference();
+        setRatingScale(scale);
+        if (dish) {
+          setName(dish.name);
+          setRating(toDisplayRating(dish.rating, scale));
+          setCategoryId(dish.categoryId);
+          setNotes(dish.notes || '');
+          setImageUri(dish.photoUri);
+        } else {
+          setName('');
+          setRating(0);
+          setCategoryId(undefined);
+          setNotes('');
+          setImageUri(undefined);
+        }
+      })();
       loadCategories();
     }
   }, [visible, dish]);
@@ -137,7 +143,7 @@ export default function DishEditModal({ visible, dish, visitId, onSave, onClose 
     }
     onSave({
       name: name.trim(),
-      rating,
+      rating: toInternalRating(rating, ratingScale),
       categoryId,
       notes: notes.trim() || undefined,
       photoUri: imageUri,
@@ -225,6 +231,7 @@ export default function DishEditModal({ visible, dish, visitId, onSave, onClose 
                   size={32}
                   disabled={false}
                   showValue={true}
+                  maxRating={ratingScale}
                 />
               </View>
             </View>

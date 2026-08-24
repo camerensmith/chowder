@@ -21,6 +21,7 @@ import { RootStackParamList } from '../types';
 import { theme } from '../lib/theme';
 import { getAllLists, createList, deleteList } from '../lib/db';
 import { List } from '../types';
+import { getRatingScalePreference, toDisplayRating, RatingScale } from '../lib/ratingScale';
 
 type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
 
@@ -31,10 +32,12 @@ export default function ListsScreen() {
   const swipeableRefs = useRef<{ [key: string]: any }>({});
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [newListName, setNewListName] = useState('');
+  const [ratingScale, setRatingScale] = useState<RatingScale>(5);
 
   useFocusEffect(
     React.useCallback(() => {
       loadLists();
+      getRatingScalePreference().then(setRatingScale);
     }, [])
   );
 
@@ -100,10 +103,11 @@ export default function ListsScreen() {
 
   const renderStarRating = (rating?: number) => {
     if (!rating) return null;
+    const displayRating = toDisplayRating(rating, ratingScale);
     return (
       <View style={styles.ratingContainer}>
         <MaterialCommunityIcons name="star" size={14} color={theme.colors.star} />
-        <Text style={styles.ratingText}>{rating.toFixed(1)}</Text>
+        <Text style={styles.ratingText}>{displayRating.toFixed(1)}</Text>
       </View>
     );
   };
