@@ -300,8 +300,9 @@ export default function PlaceEditModal({ visible, place, onClose, onSave }: Plac
                       ? toDisplayRating(overallRatingManual, ratingScale)
                       : toDisplayRating(rating || 0, ratingScale)}
                     onRatingChange={(newRating) => {
-                      setRating(newRating);
-                      setOverallRatingManual(newRating);
+                      const internalRating = toInternalRating(newRating, ratingScale);
+                      setRating(internalRating);
+                      setOverallRatingManual(internalRating);
                     }}
                     size={32}
                     disabled={false}

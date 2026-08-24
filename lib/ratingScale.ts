@@ -16,8 +16,9 @@ if (Platform.OS !== 'web') {
 
 export async function getRatingScalePreference(): Promise<RatingScale> {
   try {
-    if (Platform.OS === 'web' && typeof window !== 'undefined' && window.localStorage) {
-      const value = window.localStorage.getItem(RATING_SCALE_KEY);
+    const webStorage = (globalThis as any)?.localStorage;
+    if (Platform.OS === 'web' && webStorage) {
+      const value = webStorage.getItem(RATING_SCALE_KEY);
       return value === '10' ? 10 : DEFAULT_RATING_SCALE;
     }
     if (AsyncStorage) {
@@ -30,9 +31,9 @@ export async function getRatingScalePreference(): Promise<RatingScale> {
 
 export async function setRatingScalePreference(scale: RatingScale): Promise<void> {
   const value = String(scale);
-  if (Platform.OS === 'web' && typeof window !== 'undefined' && window.localStorage) {
-    window.localStorage.setItem(RATING_SCALE_KEY, value);
-    window.dispatchEvent(new CustomEvent('chowder_rating_scale_changed', { detail: scale }));
+  const webStorage = (globalThis as any)?.localStorage;
+  if (Platform.OS === 'web' && webStorage) {
+    webStorage.setItem(RATING_SCALE_KEY, value);
     return;
   }
   if (AsyncStorage) {

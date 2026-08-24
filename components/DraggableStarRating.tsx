@@ -36,7 +36,7 @@ export default function DraggableStarRating({
   useEffect(() => {
     if (Platform.OS !== 'web' || disabled) return;
 
-    const handleGlobalMouseMove = (e: MouseEvent) => {
+    const handleGlobalMouseMove = (e: any) => {
       if (!isDragging || !containerRef.current) return;
       e.preventDefault();
       const element = containerRef.current as any;

@@ -18,6 +18,7 @@ import { Place, Visit, List, Dish, ListItem } from '../types';
 import { getRatingScalePreference, toDisplayRating, RatingScale } from '../lib/ratingScale';
 
 type TimeRange = 'Week' | 'Month' | 'Year';
+const INTERNAL_MAX_RATING = 5;
 
 interface StatCardProps {
   value: string | number;
@@ -175,6 +176,8 @@ export default function DashboardScreen() {
     .slice(0, 5);
 
   const recentRated = useMemo(() => {
+    const memoVisitsById = new Map(visits.map(v => [v.id, v]));
+    const memoPlacesById = new Map(places.map(p => [p.id, p]));
     const placeToListNames = new Map<string, string[]>();
     listItems.forEach(item => {
       const list = lists.find(l => l.id === item.listId);
@@ -188,9 +191,9 @@ export default function DashboardScreen() {
       .sort((a, b) => b.createdAt - a.createdAt)
       .filter(d => d.rating > 0)
       .map(dish => {
-        const visit = visitsById.get(dish.visitId);
+        const visit = memoVisitsById.get(dish.visitId);
         if (!visit) return null;
-        const place = placesById.get(visit.placeId);
+        const place = memoPlacesById.get(visit.placeId);
         if (!place) return null;
 
         return {
@@ -206,7 +209,7 @@ export default function DashboardScreen() {
       })
       .filter((item): item is NonNullable<typeof item> => !!item)
       .slice(0, 3);
-  }, [dishes, listItems, lists, visitsById, placesById]);
+  }, [dishes, listItems, lists, visits, places]);
 
   const renderTimeRangeToggle = () => (
     <View style={styles.toggleContainer}>
@@ -378,7 +381,7 @@ export default function DashboardScreen() {
               value={avgScoreDisplay}
               label="Avg Rating"
               sublabel={`This ${timeRange}`}
-              progress={count > 0 ? avgScore / 5 : 0}
+              progress={count > 0 ? avgScore / INTERNAL_MAX_RATING : 0}
               color={theme.colors.star}
             />
           </TouchableOpacity>

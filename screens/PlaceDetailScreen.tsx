@@ -156,8 +156,9 @@ export default function PlaceDetailScreen() {
   };
 
   const handleDelete = () => {
-    if (Platform.OS === 'web' && typeof window !== 'undefined') {
-      const confirmed = window.confirm(`Delete "${place?.name}"? This action cannot be undone.`);
+    const webWindow = (globalThis as any)?.window;
+    if (Platform.OS === 'web' && webWindow?.confirm) {
+      const confirmed = webWindow.confirm(`Delete "${place?.name}"? This action cannot be undone.`);
       if (!confirmed) return;
       (async () => {
         try {

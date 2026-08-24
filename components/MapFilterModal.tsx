@@ -51,24 +51,9 @@ export default function MapFilterModal({ visible, filters, onClose, onApply }: M
       setLocalFilters(filters);
       setSearchText(filters.searchText || '');
       loadFilterData();
-      loadRatingScale();
-      // Set rating input based on current filter
-      const baseValue = filters.exactRating ?? filters.minRating ?? filters.maxRating;
-      if (baseValue !== undefined) {
-        setRatingInput(toDisplayRating(baseValue, ratingScale).toFixed(1));
-      } else {
-        setRatingInput('');
-      }
+      loadRatingScale(filters);
     }
   }, [visible, filters]);
-
-  useEffect(() => {
-    if (!visible) return;
-    const baseValue = localFilters.exactRating ?? localFilters.minRating ?? localFilters.maxRating;
-    if (baseValue !== undefined) {
-      setRatingInput(toDisplayRating(baseValue, ratingScale).toFixed(1));
-    }
-  }, [ratingScale, visible]);
 
   const loadFilterData = async () => {
     try {
@@ -85,9 +70,15 @@ export default function MapFilterModal({ visible, filters, onClose, onApply }: M
     }
   };
 
-  const loadRatingScale = async () => {
+  const loadRatingScale = async (nextFilters: MapFilters) => {
     const scale = await getRatingScalePreference();
     setRatingScale(scale);
+    const baseValue = nextFilters.exactRating ?? nextFilters.minRating ?? nextFilters.maxRating;
+    if (baseValue !== undefined) {
+      setRatingInput(toDisplayRating(baseValue, scale).toFixed(1));
+    } else {
+      setRatingInput('');
+    }
   };
 
   const toggleCategory = (categoryId: string) => {
@@ -348,7 +339,7 @@ export default function MapFilterModal({ visible, filters, onClose, onApply }: M
                       style={styles.ratingInput}
                       value={ratingInput}
                       onChangeText={handleRatingInputChange}
-                      placeholder={`0.0 - ${ratingScale.toFixed(1)}`}
+                      placeholder={`0.0 - ${ratingScale}`}
                       placeholderTextColor={theme.colors.textSecondary}
                       keyboardType="decimal-pad"
                     />
