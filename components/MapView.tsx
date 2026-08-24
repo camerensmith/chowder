@@ -71,8 +71,13 @@ export default function MapView({ places, onPlacePress, onPlaceSelect, onMapClic
   const pendingMarkerRef = useRef<any>(null);
   const nativeMapRef = useRef<any>(null);
   const hasInitialFitRef = useRef<boolean>(false); // Track whether we've done the initial fitBounds
+  const onMapClickRef = useRef<typeof onMapClick>(onMapClick);
   const [tileProviderId, setTileProviderId] = useState<string>('osm');
   const [mapReady, setMapReady] = useState<boolean>(false); // Track when map is initialized
+
+  useEffect(() => {
+    onMapClickRef.current = onMapClick;
+  }, [onMapClick]);
 
   // Load tile provider preference and listen for changes
   useEffect(() => {
@@ -153,11 +158,9 @@ export default function MapView({ places, onPlacePress, onPlaceSelect, onMapClic
       tileLayerRef.current = tileLayer;
 
       // Handle map clicks for placing new pins
-      if (onMapClick) {
-        map.on('click', (e: any) => {
-          onMapClick(e.latlng.lat, e.latlng.lng);
-        });
-      }
+      map.on('click', (e: any) => {
+        onMapClickRef.current?.(e.latlng.lat, e.latlng.lng);
+      });
 
       // Mark map as ready so markers can be added
       setMapReady(true);
@@ -183,7 +186,7 @@ export default function MapView({ places, onPlacePress, onPlaceSelect, onMapClic
       setMapReady(false);
       hasInitialFitRef.current = false;
     };
-  }, [initialCenter, initialZoom, onMapClick]);
+  }, []);
 
   // Update tile layer when provider changes
   useEffect(() => {
