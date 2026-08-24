@@ -156,18 +156,20 @@ export default function DraggableStarRating({
     onPanResponderGrant: (evt) => {
       setIsDragging(true);
       if (!containerRef.current) return;
-      
-      containerRef.current.measure((x, y, width, height, pageX, pageY) => {
-        const touchX = evt.nativeEvent.locationX;
+      // Capture pageX synchronously before the async measure callback
+      const capturedPageX = evt.nativeEvent.pageX;
+      containerRef.current.measure((_x, _y, width, _height, pageX, _pageY) => {
+        const touchX = Math.max(0, Math.min(width, capturedPageX - pageX));
         const newRating = getRatingFromPosition(touchX, width);
         onRatingChange(newRating);
       });
     },
     onPanResponderMove: (evt) => {
       if (!containerRef.current || !isDragging) return;
-      
-      containerRef.current.measure((x, y, width, height, pageX, pageY) => {
-        const touchX = evt.nativeEvent.locationX;
+      // Capture pageX synchronously before the async measure callback
+      const capturedPageX = evt.nativeEvent.pageX;
+      containerRef.current.measure((_x, _y, width, _height, pageX, _pageY) => {
+        const touchX = Math.max(0, Math.min(width, capturedPageX - pageX));
         const newRating = getRatingFromPosition(touchX, width);
         onRatingChange(newRating);
       });

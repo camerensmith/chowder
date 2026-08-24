@@ -13,6 +13,7 @@ import {
 import * as ImagePicker from 'expo-image-picker';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { persistImageLocally, uploadToCloudflare, resolveImageUri } from '../lib/imageStorage';
 import { useRoute, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RouteProp } from '@react-navigation/native';
@@ -81,8 +82,10 @@ export default function PlaceDetailScreen() {
       const placeVisits = await getVisitsForPlace(placeId);
       setVisits(placeVisits);
 
-      // Get main image from place cover image, fallback to most recent visit with photo
-      setMainImageUri(placeData.coverImageUri || placeVisits.find(v => v.photoUri)?.photoUri);
+      // Get main image from place cover image (with CDN fallback), or most recent visit with photo
+      const visitPhoto = placeVisits.find(v => v.photoUri)?.photoUri;
+      const resolvedUri = await resolveImageUri(placeData.coverImageUri, placeData.cloudflareImageId);
+      setMainImageUri(resolvedUri || visitPhoto);
 
       // Load category name if categoryId exists
       if (placeData.categoryId) {
@@ -228,7 +231,7 @@ export default function PlaceDetailScreen() {
     );
   };
 
-  const handleSaveEdit = async (updates: { name: string; address: string; categoryId?: string; imageUri?: string; coverImageUri?: string; overallRatingManual?: number; ratingMode?: 'aggregate' | 'overall' }) => {
+  const handleSaveEdit = async (updates: { name: string; address: string; categoryId?: string; imageUri?: string; coverImageUri?: string; cloudflareImageId?: string; overallRatingManual?: number; ratingMode?: 'aggregate' | 'overall' }) => {
     if (!place) return;
     try {
       await updatePlace(placeId, {
@@ -237,7 +240,8 @@ export default function PlaceDetailScreen() {
         categoryId: updates.categoryId,
         overallRatingManual: updates.overallRatingManual,
         ratingMode: updates.ratingMode,
-        coverImageUri: updates.coverImageUri, // Save cover image to place
+        coverImageUri: updates.coverImageUri,
+        cloudflareImageId: updates.cloudflareImageId,
       });
       
       // Visits no longer store ratings - rating is only stored in overallRatingManual
@@ -338,11 +342,12 @@ export default function PlaceDetailScreen() {
         mediaTypes: ImagePicker.MediaTypeOptions.Images,
         allowsEditing: true,
         aspect: [4, 3],
-        quality: 0.8,
+        quality: 0.6,
       });
       if (!result.canceled && result.assets.length > 0) {
-        const uri = result.assets[0].uri;
-        await updatePlace(placeId, { coverImageUri: uri });
+        const stableUri = await persistImageLocally(result.assets[0].uri);
+        const cfId = await uploadToCloudflare(stableUri).catch(() => null);
+        await updatePlace(placeId, { coverImageUri: stableUri, cloudflareImageId: cfId ?? undefined });
         await loadPlace();
       }
     } catch (error) {

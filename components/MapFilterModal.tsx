@@ -7,6 +7,7 @@ import {
   Modal,
   ScrollView,
   TextInput,
+  Platform,
 } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Category, Tag, List } from '../types';
@@ -177,7 +178,7 @@ export default function MapFilterModal({ visible, filters, onClose, onApply }: M
             </View>
           </View>
 
-          <ScrollView style={styles.content}>
+          <ScrollView style={styles.content} nestedScrollEnabled={true}>
             {/* Text Search */}
             <View style={styles.section}>
               <Text style={styles.sectionTitle}>Search</Text>
@@ -195,7 +196,7 @@ export default function MapFilterModal({ visible, filters, onClose, onApply }: M
             {/* Categories */}
             <View style={styles.section}>
               <Text style={styles.sectionTitle}>Categories</Text>
-              <View style={styles.chipContainer}>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} nestedScrollEnabled={true} contentContainerStyle={styles.chipContainer}>
                 {categories.map(cat => {
                   const isSelected = localFilters.categoryIds.includes(cat.id);
                   return (
@@ -210,13 +211,13 @@ export default function MapFilterModal({ visible, filters, onClose, onApply }: M
                     </TouchableOpacity>
                   );
                 })}
-              </View>
+              </ScrollView>
             </View>
 
             {/* Tags */}
             <View style={styles.section}>
               <Text style={styles.sectionTitle}>Tags</Text>
-              <View style={styles.chipContainer}>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} nestedScrollEnabled={true} contentContainerStyle={styles.chipContainer}>
                 {tags.map(tag => {
                   const isSelected = localFilters.tagIds.includes(tag.id);
                   return (
@@ -231,13 +232,13 @@ export default function MapFilterModal({ visible, filters, onClose, onApply }: M
                     </TouchableOpacity>
                   );
                 })}
-              </View>
+              </ScrollView>
             </View>
 
             {/* Lists */}
             <View style={styles.section}>
               <Text style={styles.sectionTitle}>Lists</Text>
-              <View style={styles.chipContainer}>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} nestedScrollEnabled={true} contentContainerStyle={styles.chipContainer}>
                 {lists.map(list => {
                   const isSelected = localFilters.listIds.includes(list.id);
                   return (
@@ -252,7 +253,7 @@ export default function MapFilterModal({ visible, filters, onClose, onApply }: M
                     </TouchableOpacity>
                   );
                 })}
-              </View>
+              </ScrollView>
             </View>
 
             {/* Rating Filter */}
@@ -410,8 +411,9 @@ const styles = StyleSheet.create({
   },
   chipContainer: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
+    flexWrap: 'nowrap',
     gap: theme.spacing.sm,
+    paddingBottom: theme.spacing.xs,
   },
   chip: {
     paddingHorizontal: theme.spacing.md,

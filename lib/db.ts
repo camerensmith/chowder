@@ -192,6 +192,15 @@ export async function initializeDatabase(): Promise<void> {
       }
     }
 
+    // Migration: Add cloudflareImageId column to places table if it doesn't exist
+    try {
+      await db.execAsync('ALTER TABLE places ADD COLUMN cloudflareImageId TEXT;');
+    } catch (e: any) {
+      if (!e.message?.includes('duplicate column')) {
+        console.warn('Migration warning:', e);
+      }
+    }
+
     // Migration: Remove rating column from visits table if it exists
     try {
       await db.execAsync('ALTER TABLE visits DROP COLUMN rating;');
@@ -472,7 +481,7 @@ export async function getPlace(placeId: string): Promise<Place | null> {
   return place;
 }
 
-export async function updatePlace(placeId: string, updates: Partial<Pick<Place, 'name' | 'address' | 'categoryId' | 'notes' | 'overallRatingManual' | 'ratingMode' | 'coverImageUri'>>): Promise<void> {
+export async function updatePlace(placeId: string, updates: Partial<Pick<Place, 'name' | 'address' | 'categoryId' | 'notes' | 'overallRatingManual' | 'ratingMode' | 'coverImageUri' | 'cloudflareImageId'>>): Promise<void> {
   if (Platform.OS === 'web') {
     const place = await indexedDB.getPlace(placeId);
     if (!place) throw new Error('Place not found');

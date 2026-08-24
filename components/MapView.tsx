@@ -57,11 +57,12 @@ interface MapViewProps {
   pendingPin?: { latitude: number; longitude: number } | null; // Temporary pin awaiting confirmation
   initialCenter?: { lat: number; lng: number };
   initialZoom?: number;
-  center?: { lat: number; lng: number }; // Dynamic center for recentering
+  center?: { lat: number; lng: number }; // Dynamic center for recentering (one-shot)
   zoom?: number; // Dynamic zoom
+  onCenterConsumed?: () => void; // Called after center animation so parent can clear it
 }
 
-export default function MapView({ places, onPlacePress, onPlaceSelect, onMapClick, selectedPlaceId, pendingPin, initialCenter, initialZoom = 13, center, zoom }: MapViewProps) {
+export default function MapView({ places, onPlacePress, onPlaceSelect, onMapClick, selectedPlaceId, pendingPin, initialCenter, initialZoom = 13, center, zoom, onCenterConsumed }: MapViewProps) {
   const mapRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<any>(null);
   const tileLayerRef = useRef<any>(null);
@@ -301,6 +302,7 @@ export default function MapView({ places, onPlacePress, onPlaceSelect, onMapClic
             duration: 0.5,
           });
         }
+        onCenterConsumed?.();
       };
       updateCenter().catch(console.error);
     } else {
@@ -337,6 +339,7 @@ export default function MapView({ places, onPlacePress, onPlaceSelect, onMapClic
           }
         }
       }
+      onCenterConsumed?.();
     }
   }, [center, zoom, initialZoom]);
 

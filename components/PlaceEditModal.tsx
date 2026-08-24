@@ -17,12 +17,13 @@ import { Place, Category } from '../types';
 import { theme } from '../lib/theme';
 import { getCategoriesByType } from '../lib/db';
 import DraggableStarRating from './DraggableStarRating';
+import { persistImageLocally, uploadToCloudflare } from '../lib/imageStorage';
 
 interface PlaceEditModalProps {
   visible: boolean;
   place: Place | null;
   onClose: () => void;
-  onSave: (updates: { name: string; address: string; categoryId?: string; rating?: number; imageUri?: string; coverImageUri?: string; overallRatingManual?: number; ratingMode?: 'aggregate' | 'overall' }) => void;
+  onSave: (updates: { name: string; address: string; categoryId?: string; rating?: number; imageUri?: string; coverImageUri?: string; cloudflareImageId?: string; overallRatingManual?: number; ratingMode?: 'aggregate' | 'overall' }) => void;
 }
 
 export default function PlaceEditModal({ visible, place, onClose, onSave }: PlaceEditModalProps) {
@@ -31,6 +32,7 @@ export default function PlaceEditModal({ visible, place, onClose, onSave }: Plac
   const [categoryId, setCategoryId] = useState<string | undefined>(undefined);
   const [rating, setRating] = useState<number | undefined>(undefined);
   const [imageUri, setImageUri] = useState<string | undefined>(undefined);
+  const [cloudflareImageId, setCloudflareImageId] = useState<string | undefined>(undefined);
   const [ratingMode, setRatingMode] = useState<'aggregate' | 'overall'>('overall');
   const [overallRatingManual, setOverallRatingManual] = useState<number | undefined>(undefined);
   const [categories, setCategories] = useState<Category[]>([]);
@@ -43,6 +45,7 @@ export default function PlaceEditModal({ visible, place, onClose, onSave }: Plac
       setCategoryId(place.categoryId);
       setRating(place.overallRating);
       setImageUri(place.coverImageUri); // Load cover image if exists
+      setCloudflareImageId(place.cloudflareImageId);
       setRatingMode(place.ratingMode || 'overall');
       setOverallRatingManual(place.overallRatingManual);
       loadCategories();
@@ -72,11 +75,16 @@ export default function PlaceEditModal({ visible, place, onClose, onSave }: Plac
         mediaTypes: ImagePicker.MediaTypeOptions.Images,
         allowsEditing: true,
         aspect: [1, 1],
-        quality: 0.8,
+        quality: 0.6,
       });
 
       if (!result.canceled && result.assets[0]) {
-        setImageUri(result.assets[0].uri);
+        const stableUri = await persistImageLocally(result.assets[0].uri);
+        setImageUri(stableUri);
+        // Best-effort CDN backup — fire and forget
+        uploadToCloudflare(stableUri).then(id => {
+          if (id) setCloudflareImageId(id);
+        }).catch(() => {});
       }
     } catch (error) {
       console.error('Error picking image:', error);
@@ -97,11 +105,16 @@ export default function PlaceEditModal({ visible, place, onClose, onSave }: Plac
       const result = await ImagePicker.launchCameraAsync({
         allowsEditing: true,
         aspect: [1, 1],
-        quality: 0.8,
+        quality: 0.6,
       });
 
       if (!result.canceled && result.assets[0]) {
-        setImageUri(result.assets[0].uri);
+        const stableUri = await persistImageLocally(result.assets[0].uri);
+        setImageUri(stableUri);
+        // Best-effort CDN backup — fire and forget
+        uploadToCloudflare(stableUri).then(id => {
+          if (id) setCloudflareImageId(id);
+        }).catch(() => {});
       }
     } catch (error) {
       console.error('Error taking photo:', error);
@@ -124,6 +137,7 @@ export default function PlaceEditModal({ visible, place, onClose, onSave }: Plac
 
   const handleRemoveImage = () => {
     setImageUri(undefined);
+    setCloudflareImageId(undefined);
   };
 
   const handleSave = () => {
@@ -138,6 +152,7 @@ export default function PlaceEditModal({ visible, place, onClose, onSave }: Plac
       rating,
       imageUri,
       coverImageUri: imageUri, // Save as cover image
+      cloudflareImageId,
       ratingMode,
       overallRatingManual: ratingMode === 'overall' && rating ? rating : undefined,
     });

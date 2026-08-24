@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import {
   View,
   Text,
@@ -39,6 +39,7 @@ import PlaceSaveModal from '../components/PlaceSaveModal';
 import PlaceInfoCard from '../components/PlaceInfoCard';
 import MapFilterModal, { MapFilters } from '../components/MapFilterModal';
 import AddToListModal from '../components/AddToListModal';
+import { persistImageLocally, uploadToCloudflare } from '../lib/imageStorage';
 
 type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
 
@@ -75,6 +76,9 @@ export default function MapScreen() {
   const [filters, setFilters] = useState<MapFilters>(DEFAULT_FILTERS);
   const [allPlaces, setAllPlaces] = useState<Place[]>([]);
   const [filteredPlaces, setFilteredPlaces] = useState<Place[]>([]);
+
+  // Recenter: only set when user explicitly presses the recenter button; cleared after one use
+  const [recenterTarget, setRecenterTarget] = useState<{ lat: number; lng: number } | null>(null);
 
   // Add-to-list state
   const [showAddToListModal, setShowAddToListModal] = useState(false);
@@ -114,11 +118,11 @@ export default function MapScreen() {
     applyFilters(allPlaces, effectiveFilters);
   }, [activeFriendListIds, filters, allPlaces]);
 
-  const getCurrentLocation = async (showError = false) => {
+  const getCurrentLocation = async (recenterAfter = false) => {
     try {
       const { status } = await Location.requestForegroundPermissionsAsync();
       if (status !== 'granted') {
-        if (showError) {
+        if (recenterAfter) {
           console.log('Location permission denied');
         }
         return;
@@ -133,6 +137,13 @@ export default function MapScreen() {
         latitude: location.coords.latitude,
         longitude: location.coords.longitude,
       });
+      // Only recenter the map when the user explicitly pressed the recenter button
+      if (recenterAfter) {
+        setRecenterTarget({
+          lat: location.coords.latitude,
+          lng: location.coords.longitude,
+        });
+      }
     } catch (error: any) {
       // Silently handle location errors - they're common on web browsers
       // Error codes:
@@ -142,7 +153,7 @@ export default function MapScreen() {
       // All are non-fatal - app works fine without location
       
       // Only show a single helpful message if user explicitly requested location
-      if (showError && error?.code === 2) {
+      if (recenterAfter && error?.code === 2) {
         // On web browsers, location often fails - this is normal
         console.log('Location unavailable. This is common on web browsers. The app works fine without location.');
       }
@@ -303,12 +314,13 @@ export default function MapScreen() {
         mediaTypes: ImagePicker.MediaTypeOptions.Images,
         allowsEditing: true,
         aspect: [4, 3],
-        quality: 0.8,
+        quality: 0.6,
       });
       if (!result.canceled && result.assets.length > 0) {
-        const uri = result.assets[0].uri;
-        await updatePlace(selectedPlace.id, { coverImageUri: uri });
-        setSelectedPlaceImage(uri);
+        const stableUri = await persistImageLocally(result.assets[0].uri);
+        const cfId = await uploadToCloudflare(stableUri).catch(() => null);
+        await updatePlace(selectedPlace.id, { coverImageUri: stableUri, cloudflareImageId: cfId ?? undefined });
+        setSelectedPlaceImage(stableUri);
         // Refresh place data
         const updated = await getPlace(selectedPlace.id);
         if (updated) setSelectedPlace(updated);
@@ -564,7 +576,8 @@ export default function MapScreen() {
           onMapClick={handleMapClick}
           selectedPlaceId={selectedPlace?.id}
           pendingPin={pendingPin}
-          center={userLocation ? { lat: userLocation.latitude, lng: userLocation.longitude } : undefined}
+          center={recenterTarget ?? undefined}
+          onCenterConsumed={() => setRecenterTarget(null)}
         />
         {/* Pending-pin confirmation banner */}
         {pendingPin && (
