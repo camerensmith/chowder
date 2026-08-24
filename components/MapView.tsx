@@ -167,7 +167,9 @@ export default function MapView({ places, onPlacePress, onPlaceSelect, onMapClic
     };
 
     initMap().catch(console.error);
+  }, [initialCenter, initialZoom]);
 
+  useEffect(() => {
     return () => {
       if (mapInstanceRef.current) {
         try {
