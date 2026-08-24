@@ -48,6 +48,7 @@
     "scheme": "chowder",
     "plugins": [
       "expo-sqlite",
+      "expo-file-system",
       [
         "expo-image-picker",
         {
@@ -58,7 +59,10 @@
     "extra": {
       "eas": {
         "projectId": "3e73e6e3-1406-4770-a741-8e77acfc912e"
-      }
+      },
+      "cloudflareAccountId": "",
+      "cloudflareAccountHash": "",
+      "cloudflareImagesToken": ""
     }
   }
 }

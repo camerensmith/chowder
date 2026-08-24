@@ -23,6 +23,7 @@ export interface Place {
   ratingMode?: 'aggregate' | 'overall'; // 'aggregate' = average of dish ratings, 'overall' = manual rating
   notes?: string;
   coverImageUri?: string; // Cover image for the place
+  cloudflareImageId?: string; // Cloudflare Images ID for CDN fallback
   tagIds?: string[]; // Array of tag IDs (not stored in DB, loaded separately)
   apiId?: string;
   synced: boolean;
