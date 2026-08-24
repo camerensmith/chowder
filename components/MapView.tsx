@@ -167,9 +167,7 @@ export default function MapView({ places, onPlacePress, onPlaceSelect, onMapClic
     };
 
     initMap().catch(console.error);
-  }, [initialCenter, initialZoom]);
 
-  useEffect(() => {
     return () => {
       if (mapInstanceRef.current) {
         try {
@@ -188,7 +186,7 @@ export default function MapView({ places, onPlacePress, onPlaceSelect, onMapClic
       setMapReady(false);
       hasInitialFitRef.current = false;
     };
-  }, []);
+  }, [initialCenter, initialZoom]);
 
   // Update tile layer when provider changes
   useEffect(() => {
