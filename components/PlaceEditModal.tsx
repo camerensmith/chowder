@@ -212,30 +212,32 @@ export default function PlaceEditModal({ visible, place, onClose, onSave }: Plac
               </TouchableOpacity>
               {showCategoryPicker && (
                 <View style={styles.categoryList}>
-                  <TouchableOpacity
-                    style={styles.categoryOption}
-                    onPress={() => {
-                      setCategoryId(undefined);
-                      setShowCategoryPicker(false);
-                    }}
-                  >
-                    <Text style={styles.categoryOptionText}>None</Text>
-                  </TouchableOpacity>
-                  {categories.map(cat => (
+                  <ScrollView nestedScrollEnabled={true}>
                     <TouchableOpacity
-                      key={cat.id}
                       style={styles.categoryOption}
                       onPress={() => {
-                        setCategoryId(cat.id);
+                        setCategoryId(undefined);
                         setShowCategoryPicker(false);
                       }}
                     >
-                      <Text style={styles.categoryOptionText}>{cat.name}</Text>
-                      {categoryId === cat.id && (
-                        <MaterialCommunityIcons name="check" size={20} color={theme.colors.primary} />
-                      )}
+                      <Text style={styles.categoryOptionText}>None</Text>
                     </TouchableOpacity>
-                  ))}
+                    {categories.map(cat => (
+                      <TouchableOpacity
+                        key={cat.id}
+                        style={styles.categoryOption}
+                        onPress={() => {
+                          setCategoryId(cat.id);
+                          setShowCategoryPicker(false);
+                        }}
+                      >
+                        <Text style={styles.categoryOptionText}>{cat.name}</Text>
+                        {categoryId === cat.id && (
+                          <MaterialCommunityIcons name="check" size={20} color={theme.colors.primary} />
+                        )}
+                      </TouchableOpacity>
+                    ))}
+                  </ScrollView>
                 </View>
               )}
             </View>
