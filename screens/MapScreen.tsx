@@ -32,7 +32,7 @@ import {
   updatePlace,
   getImportedFriendLists,
 } from '../lib/db';
-import { searchPlaces, extractCoordinates, reverseGeocodeDetailed, NominatimResult } from '../lib/maps';
+import { searchPlaces, extractCoordinates, reverseGeocodeDetailed, NominatimResult, isSpecificPlace, formatAddress } from '../lib/maps';
 import MapView from '../components/MapView';
 import PlaceSearchModal from '../components/PlaceSearchModal';
 import PlaceSaveModal from '../components/PlaceSaveModal';
@@ -367,14 +367,23 @@ export default function MapScreen() {
   const handleSearchSelect = async (result: NominatimResult) => {
     try {
       const coords = extractCoordinates(result);
-      // Search selection should recenter map only (no implicit add flow)
       setSelectedPlace(null);
-      setPendingPin(null);
-      setPendingAddress(undefined);
-      setPendingRecommendedName(undefined);
-      setRecenterTarget({ lat: coords.latitude, lng: coords.longitude });
       setShowSearchModal(false);
       setSearchQuery('');
+
+      if (isSpecificPlace(result)) {
+        // Specific place (restaurant, shop, etc.): drop a pending pin so the user can add it
+        setPendingPin({ latitude: coords.latitude, longitude: coords.longitude });
+        setPendingAddress(formatAddress(result) || result.display_name || undefined);
+        setPendingRecommendedName(result.name || undefined);
+        setRecenterTarget({ lat: coords.latitude, lng: coords.longitude });
+      } else {
+        // City / region / road: just pan the map
+        setPendingPin(null);
+        setPendingAddress(undefined);
+        setPendingRecommendedName(undefined);
+        setRecenterTarget({ lat: coords.latitude, lng: coords.longitude });
+      }
     } catch (error) {
       console.error('Failed to process search result:', error);
     }

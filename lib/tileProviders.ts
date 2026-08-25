@@ -79,7 +79,7 @@ export const TILE_PROVIDERS: TileProvider[] = [
 ];
 
 // Default provider
-export const DEFAULT_TILE_PROVIDER = 'osm';
+export const DEFAULT_TILE_PROVIDER = 'carto-positron';
 
 // Get tile provider by ID
 export function getTileProvider(id: string): TileProvider {
