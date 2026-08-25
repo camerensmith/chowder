@@ -14,7 +14,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import * as Location from 'expo-location';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { theme } from '../lib/theme';
-import { searchPlaces, NominatimResult, formatAddress, SearchOptions } from '../lib/maps';
+import { searchPlaces, NominatimResult, formatAddress, SearchOptions, isSpecificPlace } from '../lib/maps';
 
 interface PlaceSearchModalProps {
   visible: boolean;
@@ -141,14 +141,22 @@ export default function PlaceSearchModal({ visible, onClose, onSelect, initialLo
               onPress={() => handleSelect(item)}
               activeOpacity={0.7}
             >
-              <MaterialCommunityIcons name="map-marker" size={20} color={theme.colors.primary} />
+              <MaterialCommunityIcons
+                name={isSpecificPlace(item) ? 'storefront-outline' : 'city-variant-outline'}
+                size={20}
+                color={isSpecificPlace(item) ? theme.colors.primary : theme.colors.textSecondary}
+              />
               <View style={styles.resultInfo}>
                 <Text style={styles.resultName}>{item.name || item.display_name}</Text>
                 <Text style={styles.resultAddress} numberOfLines={1}>
                   {formatAddress(item)}
                 </Text>
               </View>
-              <MaterialCommunityIcons name="chevron-right" size={20} color={theme.colors.textSecondary} />
+              {isSpecificPlace(item) ? (
+                <MaterialCommunityIcons name="map-marker-plus" size={20} color={theme.colors.primary} />
+              ) : (
+                <MaterialCommunityIcons name="chevron-right" size={20} color={theme.colors.textSecondary} />
+              )}
             </TouchableOpacity>
           )}
           ListEmptyComponent={

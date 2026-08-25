@@ -135,6 +135,19 @@ export interface ReverseGeocodeDetail {
   placeName?: string;    // Named place at this location (e.g. restaurant, shop), if any
 }
 
+// Returns true when the Nominatim result represents a specific named place (e.g. restaurant,
+// café, hotel, shop, attraction) rather than a geographic area or road.
+// These results should offer an "Add to Chowder" action rather than just panning the map.
+const SPECIFIC_PLACE_CLASSES = new Set(['amenity', 'shop', 'tourism', 'leisure', 'historic', 'craft', 'office']);
+const LOCATION_CLASSES = new Set(['place', 'boundary', 'natural', 'highway', 'railway', 'waterway', 'landuse', 'administrative']);
+
+export function isSpecificPlace(result: NominatimResult): boolean {
+  if (LOCATION_CLASSES.has(result.class)) return false;
+  if (SPECIFIC_PLACE_CLASSES.has(result.class)) return true;
+  // Fallback: if the top-level `name` is populated and differs from a geographic type, treat as specific
+  return Boolean(result.name && result.name.length > 0);
+}
+
 // Reverse geocoding with place name detection
 export async function reverseGeocodeDetailed(latitude: number, longitude: number): Promise<ReverseGeocodeDetail | null> {
   try {

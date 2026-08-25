@@ -18,7 +18,7 @@ type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
 
 export default function TileProviderScreen() {
   const navigation = useNavigation<NavigationProp>();
-  const [selectedProvider, setSelectedProvider] = useState<string>('osm');
+  const [selectedProvider, setSelectedProvider] = useState<string>('carto-positron');
 
   useEffect(() => {
     loadProvider();
