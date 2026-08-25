@@ -17,6 +17,7 @@ import {
   getCategoriesByType,
   getAllLists,
 } from '../lib/db';
+import { getRatingScalePreference, toDisplayRating, toInternalRating, RatingScale } from '../lib/ratingScale';
 
 export interface MapFilters {
   categoryIds: string[];
@@ -43,20 +44,14 @@ export default function MapFilterModal({ visible, filters, onClose, onApply }: M
   const [lists, setLists] = useState<List[]>([]);
   const [ratingInput, setRatingInput] = useState('');
   const [searchText, setSearchText] = useState('');
+  const [ratingScale, setRatingScale] = useState<RatingScale>(5);
 
   useEffect(() => {
     if (visible) {
       setLocalFilters(filters);
       setSearchText(filters.searchText || '');
       loadFilterData();
-      // Set rating input based on current filter
-      if (filters.exactRating !== undefined) {
-        setRatingInput(filters.exactRating.toString());
-      } else if (filters.minRating !== undefined) {
-        setRatingInput(filters.minRating.toString());
-      } else {
-        setRatingInput('');
-      }
+      loadRatingScale(filters);
     }
   }, [visible, filters]);
 
@@ -72,6 +67,17 @@ export default function MapFilterModal({ visible, filters, onClose, onApply }: M
       setLists(allLists);
     } catch (error) {
       console.error('Failed to load filter data:', error);
+    }
+  };
+
+  const loadRatingScale = async (nextFilters: MapFilters) => {
+    const scale = await getRatingScalePreference();
+    setRatingScale(scale);
+    const baseValue = nextFilters.exactRating ?? nextFilters.minRating ?? nextFilters.maxRating;
+    if (baseValue !== undefined) {
+      setRatingInput(toDisplayRating(baseValue, scale).toFixed(1));
+    } else {
+      setRatingInput('');
     }
   };
 
@@ -115,14 +121,15 @@ export default function MapFilterModal({ visible, filters, onClose, onApply }: M
   const handleRatingInputChange = (value: string) => {
     setRatingInput(value);
     const numValue = parseFloat(value);
-    if (!isNaN(numValue) && numValue >= 0 && numValue <= 5) {
+    if (!isNaN(numValue) && numValue >= 0 && numValue <= ratingScale) {
+      const internalValue = toInternalRating(numValue, ratingScale);
       const { ratingFilterType } = localFilters;
       if (ratingFilterType === 'exact') {
-        setLocalFilters(prev => ({ ...prev, exactRating: numValue }));
+        setLocalFilters(prev => ({ ...prev, exactRating: internalValue }));
       } else if (ratingFilterType === 'min') {
-        setLocalFilters(prev => ({ ...prev, minRating: numValue }));
+        setLocalFilters(prev => ({ ...prev, minRating: internalValue }));
       } else if (ratingFilterType === 'max') {
-        setLocalFilters(prev => ({ ...prev, maxRating: numValue }));
+        setLocalFilters(prev => ({ ...prev, maxRating: internalValue }));
       }
     }
   };
@@ -332,7 +339,7 @@ export default function MapFilterModal({ visible, filters, onClose, onApply }: M
                       style={styles.ratingInput}
                       value={ratingInput}
                       onChangeText={handleRatingInputChange}
-                      placeholder="0.0 - 5.0"
+                      placeholder={`0.0 - ${ratingScale}`}
                       placeholderTextColor={theme.colors.textSecondary}
                       keyboardType="decimal-pad"
                     />

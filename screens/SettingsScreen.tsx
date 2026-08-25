@@ -20,6 +20,7 @@ import { signOut } from '../lib/auth';
 import { stopSyncService } from '../lib/sync';
 import { Platform } from 'react-native';
 import { getTileProviderPreference, getTileProvider } from '../lib/tileProviders';
+import { getRatingScalePreference, setRatingScalePreference, RatingScale } from '../lib/ratingScale';
 
 type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
 
@@ -27,11 +28,13 @@ export default function SettingsScreen() {
   const navigation = useNavigation<NavigationProp>();
   const [author, setAuthor] = useState<any>(null);
   const [tileProviderName, setTileProviderName] = useState<string>('OpenStreetMap');
+  const [ratingScale, setRatingScale] = useState<RatingScale>(5);
   const [friendLists, setFriendLists] = useState<List[]>([]);
 
   useEffect(() => {
     loadAuthor();
     loadTileProvider();
+    loadRatingScale();
     loadFriendLists();
   }, []);
 
@@ -39,6 +42,7 @@ export default function SettingsScreen() {
   useFocusEffect(
     React.useCallback(() => {
       loadTileProvider();
+      loadRatingScale();
       loadFriendLists();
     }, [])
   );
@@ -52,6 +56,17 @@ export default function SettingsScreen() {
   const loadAuthor = async () => {
     const authorData = await getAuthor();
     setAuthor(authorData);
+  };
+
+  const loadRatingScale = async () => {
+    const scale = await getRatingScalePreference();
+    setRatingScale(scale);
+  };
+
+  const handleToggleRatingScale = async () => {
+    const nextScale: RatingScale = ratingScale === 5 ? 10 : 5;
+    await setRatingScalePreference(nextScale);
+    setRatingScale(nextScale);
   };
 
   const loadFriendLists = async () => {
@@ -348,6 +363,18 @@ export default function SettingsScreen() {
           >
             <Text style={styles.settingLabel}>Manage Categories</Text>
             <MaterialCommunityIcons name="chevron-right" size={20} color={theme.colors.textSecondary} />
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.settingRow}
+            onPress={handleToggleRatingScale}
+            activeOpacity={0.7}
+          >
+            <Text style={styles.settingLabel}>Rating Scale</Text>
+            <View style={styles.settingRight}>
+              <Text style={styles.settingValue}>Out of {ratingScale}</Text>
+              <MaterialCommunityIcons name="chevron-right" size={20} color={theme.colors.textSecondary} />
+            </View>
           </TouchableOpacity>
 
           <TouchableOpacity
