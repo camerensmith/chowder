@@ -13,6 +13,14 @@ export interface TileProvider {
 
 export const TILE_PROVIDERS: TileProvider[] = [
   {
+    id: 'organic-maps',
+    name: 'Organic Maps',
+    url: 'https://tile.maps.organicmaps.app/tiles/v1/osm/png/{z}/{x}/{y}',
+    attribution: '© OpenStreetMap contributors',
+    maxZoom: 20,
+    description: 'Privacy-focused, offline-friendly maps powered by OpenStreetMap',
+  },
+  {
     id: 'osm',
     name: 'OpenStreetMap',
     url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
@@ -79,7 +87,7 @@ export const TILE_PROVIDERS: TileProvider[] = [
 ];
 
 // Default provider
-export const DEFAULT_TILE_PROVIDER = 'carto-positron';
+export const DEFAULT_TILE_PROVIDER = 'organic-maps';
 
 // Get tile provider by ID
 export function getTileProvider(id: string): TileProvider {
