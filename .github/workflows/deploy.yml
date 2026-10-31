@@ -36,9 +36,14 @@ jobs:
       - name: Type check
         run: npm run typecheck
       
+      - name: Set build version
+        run: |
+          echo "CHOWDER_BUILD_ID=${GITHUB_SHA::7}" >> "$GITHUB_ENV"
+          echo "CHOWDER_BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_ENV"
+
       - name: Build web
         run: npx expo export --platform web
-      
+
       - name: Fix paths for GitHub Pages
         run: node fix-paths.js
         env:

@@ -9,6 +9,7 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { theme } from './lib/theme';
 import { initializeDatabase, getAuthor } from './lib/db';
 import { registerServiceWorker } from './lib/pwa';
+import UpdateBanner from './components/UpdateBanner';
 import { captureShareCodeFromUrl, listenForShareLinks } from './lib/sharing';
 import { navigationRef, openPendingShare } from './lib/navigation';
 import { RootStackParamList, MainTabParamList } from './types';
@@ -167,6 +168,7 @@ export default function App() {
         <NavigationContainer ref={navigationRef} onReady={() => { if (!needsAccount) openPendingShare(); }}>
           <RootNavigator needsAccount={needsAccount} />
         </NavigationContainer>
+        <UpdateBanner />
       </SafeAreaProvider>
     </GestureHandlerRootView>
   );
