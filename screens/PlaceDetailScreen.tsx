@@ -9,6 +9,7 @@ import {
   Alert,
   Modal,
   Platform,
+  Linking,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -274,12 +275,24 @@ export default function PlaceDetailScreen() {
     );
   };
 
+  const checkedInToday = visits.some(v => new Date(v.createdAt).toDateString() === new Date().toDateString());
+
+  const openDirections = () => {
+    if (!place) return;
+    const { latitude: lat, longitude: lng } = place;
+    const ua = typeof navigator !== 'undefined' ? navigator.userAgent : '';
+    const apple = Platform.OS === 'ios' || /iPhone|iPad|Macintosh/.test(ua);
+    const url = apple
+      ? `https://maps.apple.com/?daddr=${lat},${lng}&q=${encodeURIComponent(place.name)}`
+      : `https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}`;
+    Linking.openURL(url).catch(() => Alert.alert('Could not open maps'));
+  };
+
   const handleCheckIn = async () => {
+    if (checkedInToday) return; // one visit per day; dishes added today attach to it
     try {
-      // Create a new visit (check-in)
       await createVisit(placeId);
       await loadPlace();
-      Alert.alert('Success', 'Check-in recorded!');
     } catch (error) {
       console.error('Failed to check in:', error);
       Alert.alert('Error', 'Failed to record check-in');
@@ -395,27 +408,47 @@ export default function PlaceDetailScreen() {
       </View>
 
       <ScrollView style={styles.content}>
-        {/* Main Image */}
-        <TouchableOpacity
-          style={styles.imageContainer}
-          onPress={handleQuickAddImage}
-          activeOpacity={0.85}
-          accessibilityLabel="Tap to change cover photo"
-        >
-          {mainImageUri ? (
+        {/* Cover photo (compact prompt when there isn't one) */}
+        {mainImageUri ? (
+          <TouchableOpacity
+            style={styles.imageContainer}
+            onPress={handleQuickAddImage}
+            activeOpacity={0.85}
+            accessibilityLabel="Change cover photo"
+          >
             <Image source={{ uri: mainImageUri }} style={styles.mainImage} resizeMode="cover" />
-          ) : (
-            <View style={styles.imagePlaceholder}>
-              <MaterialCommunityIcons name="camera-plus-outline" size={48} color={theme.colors.textSecondary} />
-              <Text style={styles.imagePlaceholderText}>Add a cover photo</Text>
-            </View>
-          )}
-          {mainImageUri && (
             <View style={styles.imageOverlay}>
               <MaterialCommunityIcons name="camera-plus-outline" size={20} color="#FFFFFF" />
             </View>
-          )}
-        </TouchableOpacity>
+          </TouchableOpacity>
+        ) : (
+          <TouchableOpacity style={styles.addPhotoRow} onPress={handleQuickAddImage} activeOpacity={0.7}>
+            <MaterialCommunityIcons name="camera-plus-outline" size={22} color={theme.colors.primary} />
+            <Text style={styles.addPhotoText}>Add a cover photo</Text>
+          </TouchableOpacity>
+        )}
+
+        {/* Category + address (tap for directions) */}
+        {(categoryName || place.address) ? (
+          <View style={styles.infoBlock}>
+            {categoryName ? (
+              <View style={styles.categoryChip}>
+                <MaterialCommunityIcons name="tag" size={14} color={theme.colors.primary} />
+                <Text style={styles.categoryText}>{categoryName}</Text>
+              </View>
+            ) : null}
+            {place.address ? (
+              <TouchableOpacity style={styles.addressRow} onPress={openDirections} accessibilityRole="link" accessibilityLabel={`Directions to ${place.address}`}>
+                <MaterialCommunityIcons name="map-marker-outline" size={18} color={theme.colors.textSecondary} />
+                <Text style={styles.address} numberOfLines={2}>{place.address}</Text>
+                <View style={styles.directionsPill}>
+                  <MaterialCommunityIcons name="directions" size={14} color={theme.colors.primary} />
+                  <Text style={styles.directionsText}>Directions</Text>
+                </View>
+              </TouchableOpacity>
+            ) : null}
+          </View>
+        ) : null}
 
         {/* Rating */}
         <View style={styles.ratingSection}>
@@ -496,11 +529,13 @@ export default function PlaceDetailScreen() {
                     onPress={() => handleEditDish(dish)}
                     activeOpacity={0.7}
                   >
-                    <Image 
-                      source={dish.photoUri ? { uri: dish.photoUri } : require('../assets/placeholder.png')} 
-                      style={styles.dishImage} 
-                      resizeMode="cover"
-                    />
+                    {dish.photoUri ? (
+                      <Image source={{ uri: dish.photoUri }} style={styles.dishImage} resizeMode="cover" />
+                    ) : (
+                      <View style={[styles.dishImage, styles.dishImageEmpty]}>
+                        <MaterialCommunityIcons name="silverware-fork-knife" size={24} color={theme.colors.textSecondary} />
+                      </View>
+                    )}
                     <View style={styles.dishContent}>
                       <View style={styles.dishHeader}>
                         <Text style={styles.dishName}>{dish.name}</Text>
@@ -539,24 +574,6 @@ export default function PlaceDetailScreen() {
         <View style={styles.section}>
           <TagManager placeId={placeId} onTagsChange={loadPlace} />
         </View>
-
-        {/* Category */}
-        {categoryName && (
-          <View style={styles.section}>
-            <View style={styles.categoryChip}>
-              <MaterialCommunityIcons name="tag" size={16} color={theme.colors.primary} />
-              <Text style={styles.categoryText}>{categoryName}</Text>
-            </View>
-          </View>
-        )}
-
-        {/* Address */}
-        {place.address && (
-          <View style={styles.section}>
-            <MaterialCommunityIcons name="map-marker" size={20} color={theme.colors.textSecondary} />
-            <Text style={styles.address}>{place.address}</Text>
-          </View>
-        )}
 
         {/* Notes */}
         <View style={styles.section}>
@@ -640,12 +657,13 @@ export default function PlaceDetailScreen() {
           )}
           {/* Check In Button */}
           <TouchableOpacity
-            style={styles.checkInButton}
+            style={[styles.checkInButton, checkedInToday && styles.checkInButtonDone]}
             onPress={handleCheckIn}
+            disabled={checkedInToday}
             activeOpacity={0.8}
           >
-            <MaterialCommunityIcons name="map-marker-check" size={24} color="#FFFFFF" />
-            <Text style={styles.checkInButtonText}>Check In</Text>
+            <MaterialCommunityIcons name={checkedInToday ? 'check-circle' : 'map-marker-check'} size={24} color="#FFFFFF" />
+            <Text style={styles.checkInButtonText}>{checkedInToday ? 'Checked in today' : 'Check In'}</Text>
           </TouchableOpacity>
         </View>
       </ScrollView>
@@ -831,7 +849,7 @@ const styles = StyleSheet.create({
   address: {
     ...theme.typography.body,
     color: theme.colors.textSecondary,
-    marginLeft: theme.spacing.sm,
+    flex: 1,
   },
   notes: {
     ...theme.typography.body,
@@ -881,9 +899,61 @@ const styles = StyleSheet.create({
     fontStyle: 'italic',
     marginTop: theme.spacing.xs,
   },
+  addPhotoRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: theme.spacing.sm,
+    height: 56,
+    borderRadius: theme.borderRadius.lg,
+    borderWidth: 1,
+    borderStyle: 'dashed',
+    borderColor: theme.colors.border,
+    marginBottom: theme.spacing.lg,
+  },
+  addPhotoText: {
+    ...theme.typography.body,
+    color: theme.colors.primary,
+    fontWeight: '600',
+  },
+  infoBlock: {
+    gap: theme.spacing.sm,
+    marginBottom: theme.spacing.lg,
+  },
+  addressRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: theme.spacing.xs,
+  },
+  directionsPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: theme.spacing.sm,
+    paddingVertical: 4,
+    borderRadius: theme.borderRadius.full,
+    backgroundColor: theme.colors.primary + '15',
+  },
+  directionsText: {
+    ...theme.typography.caption,
+    color: theme.colors.primary,
+    fontWeight: '600',
+  },
+  dishImageEmpty: {
+    width: 56,
+    height: 56,
+    margin: 12,
+    borderRadius: 28,
+    backgroundColor: theme.colors.surface,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  checkInButtonDone: {
+    backgroundColor: '#2E7D32',
+  },
   imageContainer: {
     width: '100%',
-    height: 300,
+    height: 220,
     marginBottom: theme.spacing.lg,
     borderRadius: theme.borderRadius.lg,
     overflow: 'hidden',
@@ -996,9 +1066,11 @@ const styles = StyleSheet.create({
   },
   menuOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    justifyContent: 'center',
-    alignItems: 'center',
+    backgroundColor: 'rgba(0, 0, 0, 0.15)',
+    justifyContent: 'flex-start',
+    alignItems: 'flex-end',
+    paddingTop: 56,
+    paddingRight: theme.spacing.md,
   },
   menuContainer: {
     backgroundColor: theme.colors.background,

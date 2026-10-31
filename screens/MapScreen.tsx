@@ -31,7 +31,7 @@ import {
   updatePlace,
   getImportedFriendLists,
 } from '../lib/db';
-import { searchPlaces, extractCoordinates, reverseGeocodeDetailed, NominatimResult, isSpecificPlace, formatAddress } from '../lib/maps';
+import { reverseGeocodeDetailed, PlaceSearchResult } from '../lib/maps';
 import MapView from '../components/MapView';
 import PlaceSearchModal from '../components/PlaceSearchModal';
 import PlaceSaveModal from '../components/PlaceSaveModal';
@@ -58,7 +58,6 @@ export default function MapScreen() {
   const navigation = useNavigation<NavigationProp>();
   const insets = useSafeAreaInsets();
   const [places, setPlaces] = useState<Place[]>([]);
-  const [searchQuery, setSearchQuery] = useState('');
   const [isSearching, setIsSearching] = useState(false);
   const [showSearchModal, setShowSearchModal] = useState(false);
   const [showSaveModal, setShowSaveModal] = useState(false);
@@ -86,9 +85,7 @@ export default function MapScreen() {
   const [modalPlaceLists, setModalPlaceLists] = useState<List[]>([]);
 
   // Friend lists panel state
-  const [showFriendPanel, setShowFriendPanel] = useState(false);
-  const [friendLists, setFriendLists] = useState<List[]>([]);
-  const [activeFriendListIds, setActiveFriendListIds] = useState<Set<string>>(new Set());
+  const mapCenterRef = useRef<{ latitude: number; longitude: number } | undefined>(undefined);
   
   // Calculate recenter button position
   const tabBarHeight = 80;
@@ -105,7 +102,6 @@ export default function MapScreen() {
   useEffect(() => {
     const reload = () => {
       loadPlaces();
-      loadFriendLists();
     };
     reload();
     const unsubscribe = navigation.addListener('focus', reload);
@@ -114,8 +110,8 @@ export default function MapScreen() {
 
   // Re-filter whenever the data or any filter changes.
   useEffect(() => {
-    applyFilters(allPlaces, { ...filters, listIds: [...new Set([...filters.listIds, ...activeFriendListIds])] });
-  }, [allPlaces, filters, activeFriendListIds]);
+    applyFilters(allPlaces, filters);
+  }, [allPlaces, filters]);
 
   const getCurrentLocation = async (recenterAfter = false) => {
     try {
@@ -195,7 +191,6 @@ export default function MapScreen() {
 
   const clearFiltersAndReloadPlaces = async () => {
     setFilters(DEFAULT_FILTERS);
-    setActiveFriendListIds(new Set());
     await loadPlaces();
   };
 
@@ -243,50 +238,30 @@ export default function MapScreen() {
     }
   };
 
-  const loadFriendLists = async () => {
-    try {
-      const imported = await getImportedFriendLists();
-      setFriendLists(imported);
-    } catch (error) {
-      console.error('Failed to load friend lists:', error);
+  const handleSearchSelect = (result: PlaceSearchResult) => {
+    setSelectedPlace(null);
+    setShowSearchModal(false);
+    setRecenterTarget({ lat: result.latitude, lng: result.longitude });
+    if (result.kind === 'place') {
+      // A specific restaurant/cafe: drop a pin so it can be saved.
+      setPendingPin({ latitude: result.latitude, longitude: result.longitude });
+      setPendingAddress(result.address);
+      setPendingRecommendedName(result.name);
+    } else {
+      // City / street / neighbourhood: just go there.
+      setPendingPin(null);
+      setPendingAddress(undefined);
+      setPendingRecommendedName(undefined);
     }
   };
 
-  const handleToggleFriendList = (listId: string) => {
-    setActiveFriendListIds(prev => {
-      const next = new Set(prev);
-      if (next.has(listId)) {
-        next.delete(listId);
-      } else {
-        next.add(listId);
-      }
-      return next;
-    });
-  };
-
-  const handleSearchSelect = async (result: NominatimResult) => {
-    try {
-      const coords = extractCoordinates(result);
-      setSelectedPlace(null);
-      setShowSearchModal(false);
-      setSearchQuery('');
-
-      if (isSpecificPlace(result)) {
-        // Specific place (restaurant, shop, etc.): drop a pending pin so the user can add it
-        setPendingPin({ latitude: coords.latitude, longitude: coords.longitude });
-        setPendingAddress(formatAddress(result) || result.display_name || undefined);
-        setPendingRecommendedName(result.name || undefined);
-        setRecenterTarget({ lat: coords.latitude, lng: coords.longitude });
-      } else {
-        // City / region / road: just pan the map
-        setPendingPin(null);
-        setPendingAddress(undefined);
-        setPendingRecommendedName(undefined);
-        setRecenterTarget({ lat: coords.latitude, lng: coords.longitude });
-      }
-    } catch (error) {
-      console.error('Failed to process search result:', error);
-    }
+  const handleSelectSaved = (place: Place) => {
+    setShowSearchModal(false);
+    setPendingPin(null);
+    // Clear filters that would hide it, then fly there and open its card.
+    if (!places.some(p => p.id === place.id)) setFilters(DEFAULT_FILTERS);
+    setRecenterTarget({ lat: place.latitude, lng: place.longitude });
+    handlePlaceSelect(place);
   };
 
   const handleMapClick = (lat: number, lng: number) => {
@@ -319,35 +294,17 @@ export default function MapScreen() {
     setShowSaveModal(true);
   };
 
-  const handleQuickAddPin = async () => {
-    if (!pendingPin || !pendingRecommendedName) return;
-    try {
-      await createPlace(
-        pendingRecommendedName || 'New Place',
-        pendingPin.latitude,
-        pendingPin.longitude,
-        pendingAddress,
-      );
-      await clearFiltersAndReloadPlaces();
-      setPendingPin(null);
-      setPendingAddress(undefined);
-      setPendingRecommendedName(undefined);
-    } catch (error) {
-      console.error('Failed to quick-add place:', error);
-    }
-  };
-
   const handleCancelPin = () => {
     setPendingPin(null);
     setPendingAddress(undefined);
     setPendingRecommendedName(undefined);
   };
 
-  const handleSavePlace = async (name: string, address?: string, categoryId?: string, notes?: string) => {
+  const handleSavePlace = async (name: string, address?: string, categoryId?: string, notes?: string, rating?: number) => {
     if (!clickedLocation) return;
-    
+
     try {
-      await createPlace(
+      const created = await createPlace(
         name,
         clickedLocation.latitude,
         clickedLocation.longitude,
@@ -355,6 +312,7 @@ export default function MapScreen() {
         categoryId,
         notes
       );
+      if (rating) await updatePlace(created.id, { overallRatingManual: rating });
       // Clear filters to ensure the new place is visible on the map
       await clearFiltersAndReloadPlaces();
       setShowSaveModal(false);
@@ -423,9 +381,7 @@ export default function MapScreen() {
     <SafeAreaView style={styles.container} edges={['top']}>
       {/* Header */}
       <View style={styles.header}>
-        <TouchableOpacity onPress={loadPlaces} accessibilityLabel="Refresh" accessibilityRole="button">
-          <MaterialCommunityIcons name="refresh" size={28} color={theme.colors.primary} />
-        </TouchableOpacity>
+        <View style={{ width: 44 }} />
         <View style={styles.logoContainer}>
           <Image source={require('../assets/centericon.png')} style={styles.logoImage} />
         </View>
@@ -436,36 +392,17 @@ export default function MapScreen() {
         </TouchableOpacity>
       </View>
 
-      {/* Search Bar */}
+      {/* Search Bar (opens the search sheet) */}
       <View style={styles.searchContainer}>
-        <MaterialCommunityIcons name="magnify" size={20} color={theme.colors.textSecondary} />
-        <TextInput
-          style={styles.searchInput}
-          placeholder="Q Search places..."
-          placeholderTextColor={theme.colors.textSecondary}
-          value={searchQuery}
-          onChangeText={setSearchQuery}
-          onFocus={() => setShowSearchModal(true)}
-        />
         <TouchableOpacity
-          onPress={() => {
-            loadFriendLists();
-            setShowFriendPanel(true);
-          }}
-          style={{ marginRight: theme.spacing.sm }}
+          style={styles.searchTap}
+          onPress={() => setShowSearchModal(true)}
+          activeOpacity={0.7}
+          accessibilityRole="search"
+          accessibilityLabel="Search places"
         >
-          <View style={[styles.filterButton, activeFriendListIds.size > 0 && styles.filterButtonActive]}>
-            <MaterialCommunityIcons
-              name="account-group"
-              size={20}
-              color={activeFriendListIds.size > 0 ? theme.colors.primary : theme.colors.secondary}
-            />
-            {activeFriendListIds.size > 0 && (
-              <View style={styles.filterBadge}>
-                <Text style={styles.filterBadgeText}>{activeFriendListIds.size}</Text>
-              </View>
-            )}
-          </View>
+          <MaterialCommunityIcons name="magnify" size={20} color={theme.colors.textSecondary} />
+          <Text style={styles.searchPlaceholder} numberOfLines={1}>Search places</Text>
         </TouchableOpacity>
         <TouchableOpacity onPress={() => setShowFilterModal(true)} accessibilityLabel="Filters" accessibilityRole="button">
           <View style={styles.filterButton}>
@@ -492,27 +429,22 @@ export default function MapScreen() {
           pendingPin={pendingPin}
           center={recenterTarget ?? undefined}
           onCenterConsumed={() => setRecenterTarget(null)}
+          onViewChange={c => { mapCenterRef.current = c; }}
         />
-        {/* Pending-pin confirmation banner */}
+        {/* Pending-pin banner */}
         {pendingPin && (
           <View style={styles.pinConfirmBanner}>
-            <Text style={styles.pinConfirmText}>Add a place here?</Text>
+            <Text style={styles.pinConfirmText} numberOfLines={1}>{pendingRecommendedName || 'Add a place here?'}</Text>
             {pendingAddress ? (
-              <Text style={styles.pinAddressText}>{pendingAddress}</Text>
-            ) : null}
-            {pendingRecommendedName ? (
-              <TouchableOpacity style={styles.pinQuickAddButton} onPress={handleQuickAddPin}>
-                <MaterialCommunityIcons name="map-marker-plus" size={16} color={theme.colors.primary} />
-                <Text style={styles.pinQuickAddText}>Quick Add: {pendingRecommendedName}</Text>
-              </TouchableOpacity>
+              <Text style={styles.pinAddressText} numberOfLines={2}>{pendingAddress}</Text>
             ) : null}
             <View style={styles.pinConfirmButtons}>
               <TouchableOpacity style={styles.pinCancelButton} onPress={handleCancelPin}>
                 <Text style={styles.pinCancelButtonText}>Cancel</Text>
               </TouchableOpacity>
               <TouchableOpacity style={styles.pinConfirmButton} onPress={handleConfirmPin}>
-                <MaterialCommunityIcons name="check" size={18} color="#fff" />
-                <Text style={styles.pinConfirmButtonText}>Add Place Here</Text>
+                <MaterialCommunityIcons name="plus" size={18} color="#fff" />
+                <Text style={styles.pinConfirmButtonText}>Save Place</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -550,12 +482,11 @@ export default function MapScreen() {
       {/* Place Search Modal */}
       <PlaceSearchModal
         visible={showSearchModal}
-        onClose={() => {
-          setShowSearchModal(false);
-          setSearchQuery('');
-        }}
+        onClose={() => setShowSearchModal(false)}
         onSelect={handleSearchSelect}
-        initialLocation={userLocation || undefined}
+        onSelectSaved={handleSelectSaved}
+        savedPlaces={allPlaces}
+        near={mapCenterRef.current ?? userLocation ?? undefined}
       />
 
       {/* Place Save Modal (for map clicks) */}
@@ -593,39 +524,23 @@ export default function MapScreen() {
         onClose={() => setShowAddToListModal(false)}
       />
 
-      {/* Friend Lists Panel */}
-      <BottomSheet visible={showFriendPanel} onClose={() => setShowFriendPanel(false)} title="Friends' Lists" maxHeightFraction={0.7}>
-        {friendLists.length === 0 ? (
-          <Text style={styles.friendPanelEmpty}>
-            No imported friend lists yet.{'\n'}Import a share code in Settings.
-          </Text>
-        ) : (
-          <FlatList
-            data={friendLists}
-            keyExtractor={item => item.id}
-            renderItem={({ item }) => (
-              <TouchableOpacity style={styles.friendListRow} onPress={() => handleToggleFriendList(item.id)} activeOpacity={0.7}>
-                <View style={styles.friendListInfo}>
-                  <Text style={styles.friendListName}>{item.name}</Text>
-                  {item.importedAt ? (
-                    <Text style={styles.friendListMeta}>{new Date(item.importedAt).toLocaleDateString()}</Text>
-                  ) : null}
-                </View>
-                <Switch
-                  value={activeFriendListIds.has(item.id)}
-                  onValueChange={() => handleToggleFriendList(item.id)}
-                  trackColor={{ false: theme.colors.border, true: theme.colors.primary }}
-                />
-              </TouchableOpacity>
-            )}
-          />
-        )}
-      </BottomSheet>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
+  searchTap: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 6,
+  },
+  searchPlaceholder: {
+    ...theme.typography.body,
+    color: theme.colors.textSecondary,
+    flex: 1,
+  },
   container: {
     flex: 1,
     backgroundColor: theme.colors.background,

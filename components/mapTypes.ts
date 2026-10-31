@@ -21,6 +21,8 @@ export interface MapViewProps {
   center?: LatLng;
   zoom?: number;
   onCenterConsumed?: () => void;
+  /** Called after the user pans/zooms, with the new center. */
+  onViewChange?: (center: { latitude: number; longitude: number }) => void;
 }
 
 export const DEFAULT_CENTER: LatLng = { lat: 40.7128, lng: -74.006 }; // NYC

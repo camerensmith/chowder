@@ -41,6 +41,9 @@ function injectPinStyles() {
     .chowder-pin.selected { z-index: 2; }
     .chowder-pin.selected img { transform: scale(1.35); }
     .chowder-pending { width: 28px; height: 36px; pointer-events: none; }
+    .chowder-cluster { min-width: 34px; height: 34px; padding: 0 8px; box-sizing: border-box; border-radius: 17px;
+      background: #DC143C; color: #fff; font: 600 14px/30px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      text-align: center; border: 2px solid #fff; box-shadow: 0 1px 4px rgba(0,0,0,0.3); cursor: pointer; }
     .maplibregl-ctrl-attrib { font-size: 10px; }
   `;
   document.head.appendChild(style);
@@ -74,6 +77,8 @@ export default function MapView(props: MapViewProps) {
   const mapRef = useRef<maplibregl.Map | null>(null);
   const markersRef = useRef(new Map<string, { marker: maplibregl.Marker; place: Place }>());
   const pendingMarkerRef = useRef<maplibregl.Marker | null>(null);
+  const clusterMarkersRef = useRef<maplibregl.Marker[]>([]);
+  const reclusterRef = useRef<() => void>(() => {});
   const hasFitRef = useRef(false);
   const ignoreMapClickUntil = useRef(0);
   const propsRef = useRef(props);
@@ -113,6 +118,62 @@ export default function MapView(props: MapViewProps) {
     mapRef.current = map;
     (container as any).__chowderMap = map; // handle for debugging / browser tests
 
+    // Group pins that would overlap on screen into a numbered bubble (like
+    // Apple Maps). Tapping a bubble zooms in until the pins separate.
+    const CLUSTER_PX = 40;
+    const NO_CLUSTER_ZOOM = 17;
+    const recluster = () => {
+      clusterMarkersRef.current.forEach(m => m.remove());
+      clusterMarkersRef.current = [];
+      const entries = [...markersRef.current.values()];
+      const selectedId = propsRef.current.selectedPlaceId;
+      const show = (e: { marker: maplibregl.Marker }) => { e.marker.getElement().style.visibility = ''; };
+      if (map.getZoom() >= NO_CLUSTER_ZOOM) {
+        entries.forEach(show);
+        return;
+      }
+      const pts = entries.map(e => ({ e, p: map.project(e.marker.getLngLat()) }));
+      const used = new Set<number>();
+      pts.forEach((a, i) => {
+        if (used.has(i)) return;
+        used.add(i);
+        if (a.e.place.id === selectedId) { show(a.e); return; }
+        const group = [a];
+        pts.forEach((b, j) => {
+          if (used.has(j) || b.e.place.id === selectedId) return;
+          if (Math.hypot(a.p.x - b.p.x, a.p.y - b.p.y) < CLUSTER_PX) {
+            used.add(j);
+            group.push(b);
+          }
+        });
+        if (group.length === 1) { show(a.e); return; }
+        group.forEach(g => { g.e.marker.getElement().style.visibility = 'hidden'; });
+        const lng = group.reduce((s, g) => s + g.e.place.longitude, 0) / group.length;
+        const lat = group.reduce((s, g) => s + g.e.place.latitude, 0) / group.length;
+        const el = document.createElement('div');
+        el.className = 'chowder-cluster';
+        el.textContent = String(group.length);
+        el.setAttribute('role', 'button');
+        el.setAttribute('aria-label', `${group.length} places: ${group.map(g => g.e.place.name).join(', ')}`);
+        el.addEventListener('click', ev => {
+          ev.stopPropagation();
+          ignoreMapClickUntil.current = Date.now() + 400;
+          const bounds = new maplibregl.LngLatBounds();
+          group.forEach(g => bounds.extend([g.e.place.longitude, g.e.place.latitude]));
+          map.fitBounds(bounds, { padding: 90, maxZoom: NO_CLUSTER_ZOOM, duration: 400 });
+        });
+        clusterMarkersRef.current.push(new maplibregl.Marker({ element: el }).setLngLat([lng, lat]).addTo(map));
+      });
+    };
+    reclusterRef.current = recluster;
+    map.on('zoomend', recluster);
+    map.on('load', recluster);
+
+    map.on('moveend', () => {
+      const c = map.getCenter();
+      propsRef.current.onViewChange?.({ latitude: c.lat, longitude: c.lng });
+    });
+
     map.on('click', e => {
       if (Date.now() < ignoreMapClickUntil.current) return; // tap was on a pin
       propsRef.current.onMapClick?.(e.lngLat.lat, e.lngLat.lng);
@@ -134,6 +195,8 @@ export default function MapView(props: MapViewProps) {
       unsubscribeStyle();
       resizeObserver.disconnect();
       markersRef.current.clear();
+      clusterMarkersRef.current = [];
+      reclusterRef.current = () => {};
       pendingMarkerRef.current = null;
       map.remove();
       mapRef.current = null;
@@ -192,6 +255,7 @@ export default function MapView(props: MapViewProps) {
         map.fitBounds(bounds, { padding: 60, maxZoom: 16, duration: 0 });
       }
     }
+    reclusterRef.current();
   }, [places]);
 
   // Highlight the selected pin.
@@ -199,6 +263,7 @@ export default function MapView(props: MapViewProps) {
     for (const [id, { marker }] of markersRef.current) {
       marker.getElement().classList.toggle('selected', id === selectedPlaceId);
     }
+    reclusterRef.current();
   }, [selectedPlaceId, places]);
 
   // Pending (unsaved) pin.

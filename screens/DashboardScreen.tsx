@@ -10,7 +10,9 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { useFocusEffect } from '@react-navigation/native';
+import { useFocusEffect, useNavigation } from '@react-navigation/native';
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import type { RootStackParamList } from '../types';
 import Svg, { Circle } from 'react-native-svg';
 import { theme } from '../lib/theme';
 import { getAllPlaces, getAllVisits, getAllLists, getAllDishes, getAllListItems } from '../lib/db';
@@ -54,7 +56,14 @@ function CircularStatCard({ value, label, sublabel, color = theme.colors.primary
           />
         </Svg>
         <View style={styles.statValueContainer}>
-          <Text style={styles.statValue}>{value}</Text>
+          {/* Long text values (e.g. a dish name) shrink and wrap to stay inside the ring. */}
+          <Text
+            style={[styles.statValue, String(value).length > 4 && styles.statValueText]}
+            numberOfLines={String(value).length > 4 ? 3 : 1}
+            adjustsFontSizeToFit
+          >
+            {value}
+          </Text>
         </View>
       </View>
       <Text style={styles.statLabel}>{label}</Text>
@@ -64,6 +73,7 @@ function CircularStatCard({ value, label, sublabel, color = theme.colors.primary
 }
 
 export default function DashboardScreen() {
+  const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const [timeRange, setTimeRange] = useState<TimeRange>('Week');
   const [places, setPlaces] = useState<Place[]>([]);
   const [visits, setVisits] = useState<Visit[]>([]);
@@ -200,8 +210,9 @@ export default function DashboardScreen() {
           rating: dish.rating,
           note: dish.notes || visit.notes,
           listNames: placeToListNames.get(place.id) || [],
+          placeId: place.id,
           placeName: place.name,
-          coverImageUri: place.coverImageUri,
+          coverImageUri: place.coverImageUri || dish.photoUri,
           createdAt: dish.createdAt,
         };
       })
@@ -242,12 +253,19 @@ export default function DashboardScreen() {
         <View style={styles.sectionDivider} />
         <Text style={styles.sectionTitle}>Recently Rated</Text>
         {recentRated.map(item => (
-          <View key={item.id} style={styles.recentRow}>
-            <Image
-              source={item.coverImageUri ? { uri: item.coverImageUri } : require('../assets/placeholder.png')}
-              style={styles.recentImage}
-              resizeMode="cover"
-            />
+          <TouchableOpacity
+            key={item.id}
+            style={styles.recentRow}
+            onPress={() => navigation.navigate('PlaceDetail', { placeId: item.placeId })}
+            activeOpacity={0.7}
+          >
+            {item.coverImageUri ? (
+              <Image source={{ uri: item.coverImageUri }} style={styles.recentImage} resizeMode="cover" />
+            ) : (
+              <View style={[styles.recentImage, styles.recentImageEmpty]}>
+                <MaterialCommunityIcons name="silverware-fork-knife" size={22} color={theme.colors.textSecondary} />
+              </View>
+            )}
             <View style={styles.recentTextContainer}>
               <Text style={styles.recentTitle} numberOfLines={1}>
                 {item.placeName} · {item.dishName}
@@ -260,7 +278,8 @@ export default function DashboardScreen() {
                 <Text style={styles.recentList} numberOfLines={1}>In lists: {item.listNames.join(', ')}</Text>
               ) : null}
             </View>
-          </View>
+            <MaterialCommunityIcons name="chevron-right" size={20} color={theme.colors.textSecondary} />
+          </TouchableOpacity>
         ))}
       </View>
     );
@@ -511,10 +530,22 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
+  recentImageEmpty: {
+    backgroundColor: theme.colors.surface,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   statValue: {
     ...theme.typography.h2,
     color: theme.colors.text,
     fontWeight: '700',
+  },
+  statValueText: {
+    fontSize: 13,
+    lineHeight: 16,
+    fontWeight: '600',
+    textAlign: 'center',
+    maxWidth: 70,
   },
   statLabel: {
     ...theme.typography.bodySmall,

@@ -187,9 +187,7 @@ export default function ListsScreen() {
     <SafeAreaView style={styles.container} edges={['top']}>
       {/* Header */}
       <View style={styles.header}>
-        <TouchableOpacity onPress={loadLists} accessibilityLabel="Refresh" accessibilityRole="button">
-          <MaterialCommunityIcons name="refresh" size={28} color={theme.colors.primary} />
-        </TouchableOpacity>
+        <View style={{ width: 44 }} />
         <View style={styles.logoContainer}>
           <Image source={require('../assets/centericon.png')} style={styles.logoImage} resizeMode="contain" />
         </View>
@@ -220,13 +218,6 @@ export default function ListsScreen() {
           contentContainerStyle={styles.listContent}
           refreshing={isLoading}
           onRefresh={loadLists}
-          ListFooterComponent={
-            lists.length > 0 ? (
-              <Text style={styles.emptySubtext}>
-                {Platform.OS === 'web' ? 'Tap the trash icon to delete a list' : 'Swipe a list left to delete it'}
-              </Text>
-            ) : null
-          }
         />
       )}
 
