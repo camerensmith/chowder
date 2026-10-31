@@ -1,184 +1,131 @@
 /**
- * Image storage utilities for Chowder.
+ * Image picking + persistence.
  *
- * Flow:
- * 1. After picking/capturing an image, call `persistImageLocally` to copy the
- *    temporary picker URI to a stable path in the app's document directory.
- * 2. Call `uploadToCloudflare` (fire-and-forget) to push the image to Cloudflare
- *    Images for CDN delivery and as a backup when the local file is unavailable.
- * 3. When displaying, call `resolveImageUri` which prefers the local file and
- *    falls back to the Cloudflare CDN URL when the file is missing.
+ * - Native: the picker returns a cache file that the OS may delete, so we copy
+ *   it into the app's document directory.
+ * - Web: the picker returns a `blob:` URL that dies on reload, so we downscale
+ *   the image and store it as a JPEG data URL (saved in IndexedDB with the
+ *   record that references it).
  *
- * Cloudflare configuration (optional — upload silently skipped if absent):
- *   Set the following in app.json extra OR inject via EAS Secrets / environment
- *   variables at build time (recommended — do NOT commit real credentials):
- *
- *     "cloudflareAccountId":   "<your Cloudflare account ID>"   (for API calls)
- *     "cloudflareAccountHash": "<your Cloudflare Images account hash>" (for CDN URLs)
- *     "cloudflareImagesToken": "<your Cloudflare Images API token>"
- *
- *   Account ID  — found in your Cloudflare dashboard → Right sidebar "Account ID".
- *   Account Hash — the identifier in CDN delivery URLs:
- *                  https://imagedelivery.net/<accountHash>/<imageId>/public
- *   API Token   — needs the "Cloudflare Images: Edit" permission.
- *
- * SECURITY NOTE: Never commit a real API token to source control. Use EAS Secrets
- * (https://docs.expo.dev/build-reference/variables/) so the token is injected at
- * build time and never appears in the app bundle or repository.
+ * Use `pickImage()` everywhere instead of calling expo-image-picker directly.
  */
 
-import { Platform } from 'react-native';
-import Constants from 'expo-constants';
+import { Alert, Platform } from 'react-native';
+import * as ImagePicker from 'expo-image-picker';
 
-// Only import FileSystem on native platforms where it works
-let FileSystem: typeof import('expo-file-system') | null = null;
+const MAX_WEB_DIMENSION = 1280;
+const WEB_JPEG_QUALITY = 0.8;
+
+let LegacyFS: typeof import('expo-file-system/legacy') | null = null;
 if (Platform.OS !== 'web') {
   try {
-    FileSystem = require('expo-file-system');
+    LegacyFS = require('expo-file-system/legacy');
   } catch {
-    // expo-file-system not available, local persistence will be skipped
+    LegacyFS = null;
   }
 }
 
-interface CFConfig {
-  accountId: string;    // Used in API endpoint URLs
-  accountHash: string;  // Used in CDN delivery URLs
-  token: string;        // Cloudflare Images API token
+function loadImage(src: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const img = new (globalThis as any).Image() as HTMLImageElement;
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error('Could not read that image'));
+    img.src = src;
+  });
 }
 
-/** Read Cloudflare credentials from app.json extra */
-function getCFConfig(): CFConfig | null {
-  const extra = Constants.expoConfig?.extra ?? (Constants as any).manifest?.extra ?? {};
-  const accountId: string | undefined = extra.cloudflareAccountId;
-  const accountHash: string | undefined = extra.cloudflareAccountHash;
-  const token: string | undefined = extra.cloudflareImagesToken;
-  if (!accountId || !accountHash || !token) return null;
-  return { accountId, accountHash, token };
+async function persistWebImage(uri: string): Promise<string> {
+  if (/^https?:/.test(uri)) return uri;
+  const img = await loadImage(uri);
+  const scale = Math.min(1, MAX_WEB_DIMENSION / Math.max(img.naturalWidth, img.naturalHeight));
+  const width = Math.max(1, Math.round(img.naturalWidth * scale));
+  const height = Math.max(1, Math.round(img.naturalHeight * scale));
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return uri;
+  ctx.drawImage(img, 0, 0, width, height);
+  if (uri.startsWith('blob:')) URL.revokeObjectURL(uri);
+  return canvas.toDataURL('image/jpeg', WEB_JPEG_QUALITY);
+}
+
+async function persistNativeImage(uri: string): Promise<string> {
+  if (!LegacyFS?.documentDirectory) return uri;
+  const dir = `${LegacyFS.documentDirectory}images/`;
+  if (uri.startsWith(dir)) return uri;
+  try {
+    const info = await LegacyFS.getInfoAsync(dir);
+    if (!info.exists) await LegacyFS.makeDirectoryAsync(dir, { intermediates: true });
+    const ext = uri.split('?')[0].split('.').pop()?.toLowerCase();
+    const safeExt = ext && ext.length <= 4 ? ext : 'jpg';
+    const dest = `${dir}${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${safeExt}`;
+    await LegacyFS.copyAsync({ from: uri, to: dest });
+    return dest;
+  } catch (error) {
+    console.warn('Failed to persist image locally; using original URI', error);
+    return uri;
+  }
+}
+
+/** Turn a temporary picker URI into one that survives app restarts / page reloads. */
+export async function persistImageLocally(uri: string): Promise<string> {
+  return Platform.OS === 'web' ? persistWebImage(uri) : persistNativeImage(uri);
+}
+
+type Source = 'camera' | 'library';
+
+function chooseSource(): Promise<Source | null> {
+  // On web the browser's file picker already offers the camera on phones.
+  if (Platform.OS === 'web') return Promise.resolve('library');
+  return new Promise(resolve => {
+    Alert.alert('Add Photo', undefined, [
+      { text: 'Take Photo', onPress: () => resolve('camera') },
+      { text: 'Choose from Library', onPress: () => resolve('library') },
+      { text: 'Cancel', style: 'cancel', onPress: () => resolve(null) },
+    ], { cancelable: true, onDismiss: () => resolve(null) });
+  });
 }
 
 /**
- * Copy a temporary image URI (from the picker) to the app's document directory
- * so it survives app restarts. Returns the stable local URI, or the original
- * URI if the copy fails / the platform does not support FileSystem.
+ * Let the user pick (or take) a photo and return a persisted URI,
+ * or null if they cancelled / denied permission.
  */
-export async function persistImageLocally(tempUri: string): Promise<string> {
-  if (Platform.OS === 'web' || !FileSystem) {
-    // On web the URI is already a stable blob/data URL; no copy needed.
-    return tempUri;
-  }
+export async function pickImage(options: { aspect?: [number, number] } = {}): Promise<string | null> {
+  const source = await chooseSource();
+  if (!source) return null;
 
-  try {
-    const docDir = FileSystem.documentDirectory;
-    if (!docDir) return tempUri;
+  const pickerOptions: ImagePicker.ImagePickerOptions = {
+    mediaTypes: ['images'],
+    allowsEditing: Platform.OS !== 'web',
+    aspect: options.aspect ?? [4, 3],
+    quality: 0.7,
+  };
 
-    // Generate a stable filename using timestamp + random suffix
-    const ext = tempUri.split('.').pop()?.toLowerCase() ?? 'jpg';
-    const filename = 'img_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8) + '.' + ext;
-    const destUri = docDir + filename;
-
-    await FileSystem.copyAsync({ from: tempUri, to: destUri });
-    return destUri;
-  } catch (err) {
-    console.warn('[imageStorage] Failed to persist image locally, using original URI:', err);
-    return tempUri;
-  }
-}
-
-/**
- * Upload an image to Cloudflare Images.
- * Returns the Cloudflare image ID on success, or null on failure / if not configured.
- * This should be called after `persistImageLocally` and treated as best-effort.
- */
-export async function uploadToCloudflare(localUri: string): Promise<string | null> {
-  const cfg = getCFConfig();
-  if (!cfg) return null;
-
-  try {
-    // Step 1: request a one-time direct-upload URL from Cloudflare (uses account ID)
-    const initRes = await fetch(
-      'https://api.cloudflare.com/client/v4/accounts/' + cfg.accountId + '/images/v2/direct_upload',
-      {
-        method: 'POST',
-        headers: {
-          Authorization: 'Bearer ' + cfg.token,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ requireSignedURLs: false }),
+  let result: ImagePicker.ImagePickerResult;
+  if (source === 'camera') {
+    const { status } = await ImagePicker.requestCameraPermissionsAsync();
+    if (status !== 'granted') {
+      Alert.alert('Camera access needed', 'Allow camera access in Settings to take photos.');
+      return null;
+    }
+    result = await ImagePicker.launchCameraAsync(pickerOptions);
+  } else {
+    if (Platform.OS !== 'web') {
+      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert('Photo access needed', 'Allow photo library access in Settings to add photos.');
+        return null;
       }
-    );
-    const initJson = await initRes.json();
-    if (!initJson.success) {
-      console.warn('[imageStorage] Cloudflare direct-upload init failed:', initJson.errors);
-      return null;
     }
-    const uploadURL: string = initJson.result.uploadURL;
-    const imageId: string = initJson.result.id;
+    result = await ImagePicker.launchImageLibraryAsync(pickerOptions);
+  }
 
-    // Step 2: POST the image binary to the upload URL
-    const fd = new FormData();
-    if (Platform.OS === 'web') {
-      // On web, localUri may be a blob URL — fetch it to get the Blob
-      const blobRes = await fetch(localUri);
-      const blob = await blobRes.blob();
-      fd.append('file', blob, 'image.jpg');
-    } else {
-      // On native, use the local file URI directly
-      (fd as any).append('file', {
-        uri: localUri,
-        name: 'image.jpg',
-        type: 'image/jpeg',
-      } as any);
-    }
-
-    const uploadRes = await fetch(uploadURL, { method: 'POST', body: fd });
-    if (!uploadRes.ok) {
-      console.warn('[imageStorage] Cloudflare image upload failed:', uploadRes.status);
-      return null;
-    }
-    return imageId;
-  } catch (err) {
-    console.warn('[imageStorage] Cloudflare upload error:', err);
+  if (result.canceled || !result.assets?.[0]?.uri) return null;
+  try {
+    return await persistImageLocally(result.assets[0].uri);
+  } catch (error) {
+    Alert.alert('Photo error', error instanceof Error ? error.message : 'Could not save that photo.');
     return null;
   }
-}
-
-/**
- * Return the best URI to display an image:
- * - Prefer the local file URI when the file exists.
- * - Fall back to the Cloudflare CDN URL when the file is gone (e.g., after reinstall).
- * - Returns undefined if neither option yields a valid URI.
- */
-export async function resolveImageUri(
-  localUri: string | undefined,
-  cloudflareImageId: string | undefined
-): Promise<string | undefined> {
-  if (localUri) {
-    if (Platform.OS === 'web') {
-      // On web we can't check file existence, just return it
-      return localUri;
-    }
-    if (FileSystem) {
-      try {
-        const info = await FileSystem.getInfoAsync(localUri);
-        if (info.exists) return localUri;
-        // Local file is gone — fall through to CDN
-      } catch {
-        // Fall through to CDN
-      }
-    } else {
-      // FileSystem unavailable — trust the URI as-is
-      return localUri;
-    }
-  }
-
-  // Fall back to Cloudflare CDN (uses account hash for CDN delivery URLs)
-  if (cloudflareImageId) {
-    const cfg = getCFConfig();
-    if (cfg) {
-      return 'https://imagedelivery.net/' + cfg.accountHash + '/' + cloudflareImageId + '/public';
-    }
-  }
-
-  // No valid URI available
-  return undefined;
 }

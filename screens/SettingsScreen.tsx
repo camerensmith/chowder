@@ -7,6 +7,8 @@ import {
   StyleSheet,
   Image,
   Alert,
+  TextInput,
+  Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -14,11 +16,10 @@ import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../types';
 import { theme } from '../lib/theme';
-import { getAuthor, exportBackup, importBackup, getImportedFriendLists, deleteList } from '../lib/db';
-import { List } from '../types';
-import { signOut } from '../lib/auth';
-import { stopSyncService } from '../lib/sync';
-import { Platform } from 'react-native';
+import { getAuthor, updateAuthor, getImportedFriendLists, deleteList } from '../lib/db';
+import { Author, List } from '../types';
+import { exportBackupToFile, pickAndRestoreBackup } from '../lib/backup';
+import { pickImage } from '../lib/imageStorage';
 import { getTileProviderPreference, getTileProvider } from '../lib/tileProviders';
 import { getRatingScalePreference, setRatingScalePreference, RatingScale } from '../lib/ratingScale';
 
@@ -26,7 +27,8 @@ type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
 
 export default function SettingsScreen() {
   const navigation = useNavigation<NavigationProp>();
-  const [author, setAuthor] = useState<any>(null);
+  const [author, setAuthor] = useState<Author | null>(null);
+  const [nameDraft, setNameDraft] = useState('');
   const [tileProviderName, setTileProviderName] = useState<string>('OpenStreetMap');
   const [ratingScale, setRatingScale] = useState<RatingScale>(5);
   const [friendLists, setFriendLists] = useState<List[]>([]);
@@ -56,6 +58,24 @@ export default function SettingsScreen() {
   const loadAuthor = async () => {
     const authorData = await getAuthor();
     setAuthor(authorData);
+    setNameDraft(authorData?.displayName ?? '');
+  };
+
+  const handleSaveName = async () => {
+    const name = nameDraft.trim();
+    if (!author || !name || name === author.displayName) {
+      setNameDraft(author?.displayName ?? '');
+      return;
+    }
+    await updateAuthor({ displayName: name });
+    loadAuthor();
+  };
+
+  const handleChangeAvatar = async () => {
+    const uri = await pickImage({ aspect: [1, 1] });
+    if (!uri) return;
+    await updateAuthor({ avatarUri: uri });
+    loadAuthor();
   };
 
   const loadRatingScale = async () => {
@@ -119,194 +139,12 @@ export default function SettingsScreen() {
     navigation.navigate('ShareViewer', {});
   };
 
-  const handleExportData = async () => {
-    try {
-      const backup = await exportBackup();
-      const jsonString = JSON.stringify(backup, null, 2);
-      const filename = `chowder-backup-${new Date().toISOString().split('T')[0]}.json`;
-
-      if (Platform.OS === 'web') {
-        // Download file
-        const blob = new Blob([jsonString], { type: 'application/json' });
-        const url = URL.createObjectURL(blob);
-        const link = document.createElement('a');
-        link.href = url;
-        link.download = filename;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-        URL.revokeObjectURL(url);
-
-        // Also offer email option
-        Alert.alert(
-          'Backup Exported',
-          'Backup file downloaded. Would you like to email it to yourself?',
-          [
-            { text: 'No', style: 'cancel' },
-            {
-              text: 'Yes',
-              onPress: () => {
-                const subject = encodeURIComponent('Chowder Backup');
-                const body = encodeURIComponent(`Chowder backup file attached.\n\nBackup date: ${new Date(backup.exportedAt).toLocaleString()}\n\nPlease save the JSON file and attach it when replying.`);
-                const mailtoLink = `mailto:?subject=${subject}&body=${body}`;
-                window.open(mailtoLink);
-              },
-            },
-          ]
-        );
-      } else {
-        // For native, show options to share or copy
-        Alert.alert(
-          'Backup Ready',
-          'Choose how to save your backup:',
-          [
-            {
-              text: 'Copy to Clipboard',
-              onPress: async () => {
-                const { default: Clipboard } = await import('expo-clipboard');
-                await Clipboard.setStringAsync(jsonString);
-                Alert.alert('Success', 'Backup copied to clipboard. You can paste it into a text file or email.');
-              },
-            },
-            {
-              text: 'Share',
-              onPress: async () => {
-                try {
-                  const { default: Sharing } = await import('expo-sharing');
-                  if (await Sharing.isAvailableAsync()) {
-                    // For native, we'd need expo-file-system to save first
-                    Alert.alert('Info', 'Please use "Copy to Clipboard" and paste into an email or note app.');
-                  }
-                } catch {
-                  Alert.alert('Info', 'Please use "Copy to Clipboard" and paste into an email or note app.');
-                }
-              },
-            },
-            { text: 'Cancel', style: 'cancel' },
-          ]
-        );
-      }
-    } catch (error) {
-      console.error('Failed to export backup:', error);
-      Alert.alert('Error', 'Failed to export backup. Please try again.');
+  const handleImportData = async () => {
+    const restored = await pickAndRestoreBackup();
+    if (restored) {
+      loadAuthor();
+      loadFriendLists();
     }
-  };
-
-  const handleImportData = () => {
-    if (Platform.OS === 'web') {
-      // Create file input
-      const input = document.createElement('input');
-      input.type = 'file';
-      input.accept = '.json';
-      input.onchange = async (e: any) => {
-        const file = e.target.files?.[0];
-        if (!file) return;
-
-        try {
-          const text = await file.text();
-          const backup = JSON.parse(text);
-          
-          Alert.alert(
-            'Import Backup',
-            `This will replace all your current data with the backup from ${new Date(backup.exportedAt).toLocaleString()}. Are you sure?`,
-            [
-              { text: 'Cancel', style: 'cancel' },
-              {
-                text: 'Import',
-                style: 'destructive',
-                onPress: async () => {
-                  try {
-                    await importBackup(backup);
-                    Alert.alert('Success', 'Backup imported successfully!');
-                    // Reload app data
-                    loadAuthor();
-                  } catch (error) {
-                    console.error('Failed to import backup:', error);
-                    Alert.alert('Error', 'Failed to import backup. Please check the file format.');
-                  }
-                },
-              },
-            ]
-          );
-        } catch (error) {
-          Alert.alert('Error', 'Invalid backup file. Please check the file format.');
-        }
-      };
-      input.click();
-    } else {
-      // For native, show text input option
-      Alert.prompt(
-        'Import Backup',
-        'Paste your backup JSON here:',
-        [
-          { text: 'Cancel', style: 'cancel' },
-          {
-            text: 'Import',
-            style: 'destructive',
-            onPress: async (jsonString) => {
-              if (!jsonString) return;
-              try {
-                const backup = JSON.parse(jsonString);
-                Alert.alert(
-                  'Import Backup',
-                  `This will replace all your current data with the backup from ${new Date(backup.exportedAt).toLocaleString()}. Are you sure?`,
-                  [
-                    { text: 'Cancel', style: 'cancel' },
-                    {
-                      text: 'Import',
-                      style: 'destructive',
-                      onPress: async () => {
-                        try {
-                          await importBackup(backup);
-                          Alert.alert('Success', 'Backup imported successfully!');
-                          loadAuthor();
-                        } catch (error) {
-                          console.error('Failed to import backup:', error);
-                          Alert.alert('Error', 'Failed to import backup. Please check the format.');
-                        }
-                      },
-                    },
-                  ]
-                );
-              } catch (error) {
-                Alert.alert('Error', 'Invalid backup format. Please check your JSON.');
-              }
-            },
-          },
-        ],
-        'plain-text'
-      );
-    }
-  };
-
-  const handleLogout = () => {
-    Alert.alert(
-      'Sign Out',
-      'Are you sure you want to sign out?',
-      [
-        {
-          text: 'Cancel',
-          style: 'cancel',
-        },
-        {
-          text: 'Sign Out',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              stopSyncService();
-              await signOut();
-              navigation.reset({
-                index: 0,
-                routes: [{ name: 'Login' }],
-              });
-            } catch (error: any) {
-              console.error('Failed to sign out:', error);
-              Alert.alert('Error', 'Failed to sign out. Please try again.');
-            }
-          },
-        },
-      ]
-    );
   };
 
   return (
@@ -328,33 +166,52 @@ export default function SettingsScreen() {
         {/* Profile Section */}
         {author && (
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Account</Text>
-            <View style={styles.settingItem}>
-              <Text style={styles.settingLabel}>Display Name</Text>
-              <Text style={styles.settingValue}>{author.displayName}</Text>
-            </View>
-            {author.email && (
-              <View style={styles.settingItem}>
-                <Text style={styles.settingLabel}>Email</Text>
-                <Text style={styles.settingValue}>{author.email}</Text>
+            <Text style={styles.sectionTitle}>Profile</Text>
+            <View style={[styles.settingItem, { flexDirection: 'row', alignItems: 'center' }]}>
+              <TouchableOpacity onPress={handleChangeAvatar} accessibilityLabel="Change profile photo">
+                {author.avatarUri ? (
+                  <Image source={{ uri: author.avatarUri }} style={styles.avatar} />
+                ) : (
+                  <View style={[styles.avatar, styles.avatarPlaceholder]}>
+                    <MaterialCommunityIcons name="camera" size={20} color={theme.colors.textSecondary} />
+                  </View>
+                )}
+              </TouchableOpacity>
+              <View style={{ flex: 1, marginLeft: theme.spacing.md }}>
+                <Text style={styles.settingLabel}>Display name</Text>
+                <TextInput
+                  style={styles.nameInput}
+                  value={nameDraft}
+                  onChangeText={setNameDraft}
+                  onBlur={handleSaveName}
+                  onSubmitEditing={handleSaveName}
+                  returnKeyType="done"
+                  maxLength={50}
+                  placeholder="Your name"
+                  placeholderTextColor={theme.colors.textSecondary}
+                />
+                <Text style={styles.settingHint}>Shown as the author of lists you share.</Text>
               </View>
-            )}
+            </View>
           </View>
         )}
 
         {/* Settings Options */}
         <View style={styles.section}>
-          <TouchableOpacity
-            style={styles.settingRow}
-            onPress={() => navigation.navigate('TileProvider')}
-            activeOpacity={0.7}
-          >
-            <Text style={styles.settingLabel}>Tile Provider</Text>
-            <View style={styles.settingRight}>
-              <Text style={styles.settingValue}>{tileProviderName}</Text>
-              <MaterialCommunityIcons name="chevron-right" size={20} color={theme.colors.textSecondary} />
-            </View>
-          </TouchableOpacity>
+          {/* Native maps use Apple/Google Maps; tile styles only apply on web. */}
+          {Platform.OS === 'web' ? (
+            <TouchableOpacity
+              style={styles.settingRow}
+              onPress={() => navigation.navigate('TileProvider')}
+              activeOpacity={0.7}
+            >
+              <Text style={styles.settingLabel}>Tile Provider</Text>
+              <View style={styles.settingRight}>
+                <Text style={styles.settingValue}>{tileProviderName}</Text>
+                <MaterialCommunityIcons name="chevron-right" size={20} color={theme.colors.textSecondary} />
+              </View>
+            </TouchableOpacity>
+          ) : null}
 
           <TouchableOpacity
             style={styles.settingRow}
@@ -387,15 +244,6 @@ export default function SettingsScreen() {
             <MaterialCommunityIcons name="chevron-right" size={20} color={theme.colors.textSecondary} />
           </TouchableOpacity>
 
-          <TouchableOpacity style={styles.settingRow} activeOpacity={0.7}>
-            <Text style={styles.settingLabel}>Help & Feedback</Text>
-            <MaterialCommunityIcons name="chevron-right" size={20} color={theme.colors.textSecondary} />
-          </TouchableOpacity>
-
-          <TouchableOpacity style={styles.settingRow} activeOpacity={0.7}>
-            <Text style={styles.settingLabel}>About</Text>
-            <MaterialCommunityIcons name="chevron-right" size={20} color={theme.colors.textSecondary} />
-          </TouchableOpacity>
         </View>
 
         {/* Friends Section */}
@@ -443,7 +291,7 @@ export default function SettingsScreen() {
         <View style={styles.section}>
           <TouchableOpacity
             style={[styles.exportButton, styles.settingRow]}
-            onPress={handleExportData}
+            onPress={exportBackupToFile}
             activeOpacity={0.7}
           >
             <MaterialCommunityIcons name="download" size={20} color={theme.colors.background} />
@@ -451,24 +299,48 @@ export default function SettingsScreen() {
           </TouchableOpacity>
         </View>
 
-        {/* Logout Section */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Account Actions</Text>
-          <TouchableOpacity
-            style={styles.logoutButton}
-            onPress={handleLogout}
-            activeOpacity={0.8}
-          >
-            <MaterialCommunityIcons name="logout" size={22} color={theme.colors.background} />
-            <Text style={styles.logoutButtonText}>Sign Out</Text>
-          </TouchableOpacity>
-        </View>
+        <Text style={styles.footerNote}>
+          Chowder keeps all your data on this device. Use Backup Data regularly — it's the only copy.
+        </Text>
       </ScrollView>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
+  avatar: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+  },
+  avatarPlaceholder: {
+    backgroundColor: theme.colors.surface,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  nameInput: {
+    ...theme.typography.body,
+    color: theme.colors.text,
+    borderBottomWidth: 1,
+    borderBottomColor: theme.colors.border,
+    paddingVertical: 4,
+    marginTop: 2,
+  },
+  settingHint: {
+    ...theme.typography.caption,
+    color: theme.colors.textSecondary,
+    marginTop: 4,
+  },
+  footerNote: {
+    ...theme.typography.caption,
+    color: theme.colors.textSecondary,
+    textAlign: 'center',
+    marginTop: theme.spacing.md,
+    marginBottom: theme.spacing.xl,
+    paddingHorizontal: theme.spacing.lg,
+  },
   container: {
     flex: 1,
     backgroundColor: theme.colors.background,

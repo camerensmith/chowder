@@ -10,31 +10,31 @@ import {
   Alert,
   Image,
   Platform,
+  KeyboardAvoidingView,
 } from 'react-native';
-import * as ImagePicker from 'expo-image-picker';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Place, Category } from '../types';
 import { theme } from '../lib/theme';
-import { getCategoriesByType } from '../lib/db';
+import { getCategoriesByType, PlaceUpdates } from '../lib/db';
 import DraggableStarRating from './DraggableStarRating';
-import { persistImageLocally, uploadToCloudflare } from '../lib/imageStorage';
+import { pickImage } from '../lib/imageStorage';
 import { getRatingScalePreference, toDisplayRating, toInternalRating, RatingScale } from '../lib/ratingScale';
 
 interface PlaceEditModalProps {
   visible: boolean;
   place: Place | null;
   onClose: () => void;
-  onSave: (updates: { name: string; address: string; categoryId?: string; rating?: number; imageUri?: string; coverImageUri?: string; cloudflareImageId?: string; overallRatingManual?: number; ratingMode?: 'aggregate' | 'overall' }) => void;
+  onSave: (updates: PlaceUpdates) => void;
 }
 
 export default function PlaceEditModal({ visible, place, onClose, onSave }: PlaceEditModalProps) {
   const [name, setName] = useState('');
   const [address, setAddress] = useState('');
   const [categoryId, setCategoryId] = useState<string | undefined>(undefined);
-  const [rating, setRating] = useState<number | undefined>(undefined);
+  const [notes, setNotes] = useState('');
   const [imageUri, setImageUri] = useState<string | undefined>(undefined);
-  const [cloudflareImageId, setCloudflareImageId] = useState<string | undefined>(undefined);
   const [ratingMode, setRatingMode] = useState<'aggregate' | 'overall'>('overall');
+  // Always stored on the internal 0–5 scale; converted only for display.
   const [overallRatingManual, setOverallRatingManual] = useState<number | undefined>(undefined);
   const [categories, setCategories] = useState<Category[]>([]);
   const [showCategoryPicker, setShowCategoryPicker] = useState(false);
@@ -45,126 +45,47 @@ export default function PlaceEditModal({ visible, place, onClose, onSave }: Plac
       setName(place.name);
       setAddress(place.address || '');
       setCategoryId(place.categoryId);
-      setRating(place.overallRating);
-      setImageUri(place.coverImageUri); // Load cover image if exists
-      setCloudflareImageId(place.cloudflareImageId);
+      setNotes(place.notes || '');
+      setImageUri(place.coverImageUri);
       setRatingMode(place.ratingMode || 'overall');
       setOverallRatingManual(place.overallRatingManual);
+      setShowCategoryPicker(false);
       loadCategories();
-      loadRatingScale();
+      getRatingScalePreference().then(setRatingScale);
     }
   }, [visible, place]);
 
-  const loadRatingScale = async () => {
-    const scale = await getRatingScalePreference();
-    setRatingScale(scale);
-  };
-
   const loadCategories = async () => {
     try {
-      const placeCategories = await getCategoriesByType('place');
-      setCategories(placeCategories);
+      setCategories(await getCategoriesByType('place'));
     } catch (error) {
       console.error('Failed to load categories:', error);
     }
   };
 
-  const handlePickImage = async () => {
-    try {
-      // Request permissions
-      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      if (status !== 'granted') {
-        Alert.alert('Permission needed', 'Please grant camera roll permissions to upload images');
-        return;
-      }
-
-      // Launch image picker
-      const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
-        allowsEditing: true,
-        aspect: [1, 1],
-        quality: 0.6,
-      });
-
-      if (!result.canceled && result.assets[0]) {
-        const stableUri = await persistImageLocally(result.assets[0].uri);
-        setImageUri(stableUri);
-        // Best-effort CDN backup — fire and forget
-        uploadToCloudflare(stableUri).then(id => {
-          if (id) setCloudflareImageId(id);
-        }).catch(() => {});
-      }
-    } catch (error) {
-      console.error('Error picking image:', error);
-      Alert.alert('Error', 'Failed to pick image');
-    }
-  };
-
-  const handleTakePhoto = async () => {
-    try {
-      // Request permissions
-      const { status } = await ImagePicker.requestCameraPermissionsAsync();
-      if (status !== 'granted') {
-        Alert.alert('Permission needed', 'Please grant camera permissions to take photos');
-        return;
-      }
-
-      // Launch camera
-      const result = await ImagePicker.launchCameraAsync({
-        allowsEditing: true,
-        aspect: [1, 1],
-        quality: 0.6,
-      });
-
-      if (!result.canceled && result.assets[0]) {
-        const stableUri = await persistImageLocally(result.assets[0].uri);
-        setImageUri(stableUri);
-        // Best-effort CDN backup — fire and forget
-        uploadToCloudflare(stableUri).then(id => {
-          if (id) setCloudflareImageId(id);
-        }).catch(() => {});
-      }
-    } catch (error) {
-      console.error('Error taking photo:', error);
-      Alert.alert('Error', 'Failed to take photo');
-    }
-  };
-
-  const handleImageSource = () => {
-    Alert.alert(
-      'Select Image',
-      'Choose an option',
-      [
-        { text: 'Camera', onPress: handleTakePhoto },
-        { text: 'Photo Library', onPress: handlePickImage },
-        { text: 'Cancel', style: 'cancel' },
-      ],
-      { cancelable: true }
-    );
+  const handleImageSource = async () => {
+    const uri = await pickImage();
+    if (uri) setImageUri(uri);
   };
 
   const handleRemoveImage = () => {
     setImageUri(undefined);
-    setCloudflareImageId(undefined);
   };
 
   const handleSave = () => {
     if (!name.trim()) {
-      Alert.alert('Error', 'Place name is required');
+      Alert.alert('Name required', 'Please enter a name for this place.');
       return;
     }
     onSave({
       name: name.trim(),
-      address: address.trim(),
+      address: address.trim() || undefined,
       categoryId,
-      rating,
-      imageUri,
-      coverImageUri: imageUri, // Save as cover image
-      cloudflareImageId,
+      notes: notes.trim() || undefined,
+      coverImageUri: imageUri,
       ratingMode,
-      overallRatingManual: ratingMode === 'overall' && rating !== undefined
-        ? toInternalRating(rating, ratingScale)
-        : undefined,
+      // Keep the manual rating even in aggregate mode so switching back restores it.
+      overallRatingManual,
     });
     onClose();
   };
@@ -173,7 +94,7 @@ export default function PlaceEditModal({ visible, place, onClose, onSave }: Plac
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <View style={styles.overlay}>
+      <KeyboardAvoidingView style={styles.overlay} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <View style={styles.modal}>
           <View style={styles.header}>
             <Text style={styles.title}>Edit Place</Text>
@@ -182,7 +103,7 @@ export default function PlaceEditModal({ visible, place, onClose, onSave }: Plac
             </TouchableOpacity>
           </View>
 
-          <ScrollView style={styles.content}>
+          <ScrollView keyboardShouldPersistTaps="handled" style={styles.content}>
             {/* Name */}
             <View style={styles.field}>
               <Text style={styles.label}>Name</Text>
@@ -208,6 +129,19 @@ export default function PlaceEditModal({ visible, place, onClose, onSave }: Plac
               />
             </View>
 
+            {/* Notes */}
+            <View style={styles.field}>
+              <Text style={styles.label}>Notes</Text>
+              <TextInput
+                style={[styles.input, { minHeight: 80, textAlignVertical: 'top' }]}
+                value={notes}
+                onChangeText={setNotes}
+                placeholder="What's good here? Anything to remember?"
+                placeholderTextColor={theme.colors.textSecondary}
+                multiline
+              />
+            </View>
+
             {/* Category */}
             <View style={styles.field}>
               <Text style={styles.label}>Category</Text>
@@ -222,7 +156,7 @@ export default function PlaceEditModal({ visible, place, onClose, onSave }: Plac
               </TouchableOpacity>
               {showCategoryPicker && (
                 <View style={styles.categoryList}>
-                  <ScrollView nestedScrollEnabled={true}>
+                  <ScrollView keyboardShouldPersistTaps="handled" nestedScrollEnabled={true}>
                     <TouchableOpacity
                       style={styles.categoryOption}
                       onPress={() => {
@@ -296,30 +230,20 @@ export default function PlaceEditModal({ visible, place, onClose, onSave }: Plac
                 <Text style={styles.label}>Overall Rating</Text>
                 <View style={styles.ratingContainer}>
                   <DraggableStarRating
-                    rating={overallRatingManual !== undefined
-                      ? toDisplayRating(overallRatingManual, ratingScale)
-                      : toDisplayRating(rating || 0, ratingScale)}
+                    rating={toDisplayRating(overallRatingManual ?? 0, ratingScale)}
                     onRatingChange={(newRating) => {
-                      const internalRating = toInternalRating(newRating, ratingScale);
-                      setRating(internalRating);
-                      setOverallRatingManual(internalRating);
+                      setOverallRatingManual(newRating > 0 ? toInternalRating(newRating, ratingScale) : undefined);
                     }}
                     size={32}
                     disabled={false}
                     maxRating={ratingScale}
                   />
                 </View>
-                {rating && (
-                  <TouchableOpacity
-                    onPress={() => {
-                      setRating(undefined);
-                      setOverallRatingManual(undefined);
-                    }}
-                    style={styles.clearRating}
-                  >
+                {overallRatingManual ? (
+                  <TouchableOpacity onPress={() => setOverallRatingManual(undefined)} style={styles.clearRating}>
                     <Text style={styles.clearRatingText}>Clear rating</Text>
                   </TouchableOpacity>
-                )}
+                ) : null}
               </View>
             )}
 
@@ -357,7 +281,7 @@ export default function PlaceEditModal({ visible, place, onClose, onSave }: Plac
             </TouchableOpacity>
           </View>
         </View>
-      </View>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }

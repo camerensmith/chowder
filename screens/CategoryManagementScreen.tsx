@@ -8,6 +8,8 @@ import {
   ScrollView,
   Alert,
   Modal,
+  KeyboardAvoidingView,
+  Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -31,15 +33,15 @@ export default function CategoryManagementScreen() {
   const [categories, setCategories] = useState<Category[]>([]);
   const [showAddModal, setShowAddModal] = useState(false);
   const [newCategoryName, setNewCategoryName] = useState('');
+  const [type, setType] = useState<'place' | 'dish'>('place');
 
   useEffect(() => {
     loadCategories();
-  }, []);
+  }, [type]);
 
   const loadCategories = async () => {
     try {
-      const placeCategories = await getCategoriesByType('place');
-      setCategories(placeCategories);
+      setCategories(await getCategoriesByType(type));
     } catch (error) {
       console.error('Failed to load categories:', error);
     }
@@ -61,7 +63,7 @@ export default function CategoryManagementScreen() {
       const maxOrder = categories.length > 0
         ? Math.max(...categories.map(c => c.order ?? 0))
         : -1;
-      await createCategory(newCategoryName.trim(), 'place', undefined, maxOrder + 1);
+      await createCategory(newCategoryName.trim(), type, undefined, maxOrder + 1);
       setNewCategoryName('');
       setShowAddModal(false);
       await loadCategories();
@@ -74,7 +76,7 @@ export default function CategoryManagementScreen() {
   const handleDeleteCategory = (category: Category) => {
     Alert.alert(
       'Delete Category',
-      `Are you sure you want to delete "${category.name}"?`,
+      `Delete "${category.name}"? Anything using it will just become uncategorized.`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -94,39 +96,26 @@ export default function CategoryManagementScreen() {
     );
   };
 
-  const handleMoveUp = async (index: number) => {
-    if (index === 0) return;
+  // Move an item and renumber everything 0..n-1. (Swapping two `order` values
+  // did nothing whenever categories shared the same order, e.g. all 0.)
+  const handleMove = async (index: number, delta: -1 | 1) => {
+    const target = index + delta;
+    if (target < 0 || target >= categories.length) return;
+    const reordered = [...categories];
+    const [moved] = reordered.splice(index, 1);
+    reordered.splice(target, 0, moved);
+    setCategories(reordered);
     try {
-      const category = categories[index];
-      const prevCategory = categories[index - 1];
-      
-      // Swap orders
-      await updateCategoryOrder(category.id, prevCategory.order ?? index - 1);
-      await updateCategoryOrder(prevCategory.id, category.order ?? index);
-      
+      await Promise.all(reordered.map((c, i) => (c.order === i ? null : updateCategoryOrder(c.id, i))));
       await loadCategories();
     } catch (error) {
       console.error('Failed to reorder category:', error);
       Alert.alert('Error', 'Failed to reorder category');
+      loadCategories();
     }
   };
-
-  const handleMoveDown = async (index: number) => {
-    if (index === categories.length - 1) return;
-    try {
-      const category = categories[index];
-      const nextCategory = categories[index + 1];
-      
-      // Swap orders
-      await updateCategoryOrder(category.id, nextCategory.order ?? index + 1);
-      await updateCategoryOrder(nextCategory.id, category.order ?? index);
-      
-      await loadCategories();
-    } catch (error) {
-      console.error('Failed to reorder category:', error);
-      Alert.alert('Error', 'Failed to reorder category');
-    }
-  };
+  const handleMoveUp = (index: number) => handleMove(index, -1);
+  const handleMoveDown = (index: number) => handleMove(index, 1);
 
   const handleRestoreDefaults = () => {
     Alert.alert(
@@ -138,7 +127,7 @@ export default function CategoryManagementScreen() {
           text: 'Restore',
           onPress: async () => {
             try {
-              await initializeDefaultCategories();
+              await initializeDefaultCategories(true);
               await loadCategories();
               Alert.alert('Success', 'Default categories restored');
             } catch (error) {
@@ -164,19 +153,38 @@ export default function CategoryManagementScreen() {
         </TouchableOpacity>
       </View>
 
-      <ScrollView style={styles.content}>
-        <TouchableOpacity
-          style={styles.restoreButton}
-          onPress={handleRestoreDefaults}
-          activeOpacity={0.7}
-        >
-          <MaterialCommunityIcons name="restore" size={20} color={theme.colors.primary} />
-          <Text style={styles.restoreButtonText}>Restore Default Categories</Text>
-        </TouchableOpacity>
+      <ScrollView keyboardShouldPersistTaps="handled" style={styles.content}>
+        <View style={styles.segmented}>
+          {(['place', 'dish'] as const).map(t => (
+            <TouchableOpacity
+              key={t}
+              style={[styles.segment, type === t && styles.segmentActive]}
+              onPress={() => setType(t)}
+              activeOpacity={0.8}
+            >
+              <Text style={[styles.segmentText, type === t && styles.segmentTextActive]}>
+                {t === 'place' ? 'Place categories' : 'Dish categories'}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+
+        {type === 'place' ? (
+          <TouchableOpacity
+            style={styles.restoreButton}
+            onPress={handleRestoreDefaults}
+            activeOpacity={0.7}
+          >
+            <MaterialCommunityIcons name="restore" size={20} color={theme.colors.primary} />
+            <Text style={styles.restoreButtonText}>Restore Default Categories</Text>
+          </TouchableOpacity>
+        ) : null}
 
         {categories.length === 0 ? (
           <View style={styles.emptyContainer}>
-            <Text style={styles.emptyText}>No categories yet</Text>
+            <Text style={styles.emptyText}>
+              {type === 'dish' ? 'No dish categories yet. Tap + to add one (e.g. Noodles, Dessert).' : 'No categories yet'}
+            </Text>
           </View>
         ) : (
           categories.map((category, index) => (
@@ -235,10 +243,10 @@ export default function CategoryManagementScreen() {
         animationType="slide"
         onRequestClose={() => setShowAddModal(false)}
       >
-        <View style={styles.modalOverlay}>
+        <KeyboardAvoidingView style={styles.modalOverlay} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
           <View style={styles.modal}>
             <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Add Category</Text>
+              <Text style={styles.modalTitle}>{type === 'dish' ? 'Add Dish Category' : 'Add Place Category'}</Text>
               <TouchableOpacity onPress={() => setShowAddModal(false)}>
                 <MaterialCommunityIcons name="close" size={24} color={theme.colors.text} />
               </TouchableOpacity>
@@ -252,6 +260,8 @@ export default function CategoryManagementScreen() {
                 placeholder="Enter category name"
                 placeholderTextColor={theme.colors.textSecondary}
                 autoFocus
+                onSubmitEditing={handleAddCategory}
+                returnKeyType="done"
               />
             </View>
             <View style={styles.modalFooter}>
@@ -272,13 +282,39 @@ export default function CategoryManagementScreen() {
               </TouchableOpacity>
             </View>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
+  segmented: {
+    flexDirection: 'row',
+    backgroundColor: theme.colors.surface,
+    borderRadius: theme.borderRadius.md,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    padding: 3,
+    marginBottom: theme.spacing.lg,
+  },
+  segment: {
+    flex: 1,
+    paddingVertical: theme.spacing.sm,
+    borderRadius: theme.borderRadius.sm,
+    alignItems: 'center',
+  },
+  segmentActive: {
+    backgroundColor: theme.colors.primary,
+  },
+  segmentText: {
+    ...theme.typography.bodySmall,
+    color: theme.colors.text,
+    fontWeight: '600',
+  },
+  segmentTextActive: {
+    color: '#fff',
+  },
   container: {
     flex: 1,
     backgroundColor: theme.colors.background,

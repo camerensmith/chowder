@@ -49,8 +49,6 @@ export default function PlaceSearchModal({ visible, onClose, onSelect, initialLo
 
       const location = await Location.getCurrentPositionAsync({
         accuracy: Location.Accuracy.Low, // Lower accuracy = faster, more reliable
-        timeout: 15000, // 15 second timeout
-        maximumAge: 300000, // Accept cached location up to 5 minutes old
       });
       
       setUserLocation({

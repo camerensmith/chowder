@@ -4,9 +4,9 @@ import {
   Text,
   TouchableOpacity,
   StyleSheet,
-  Modal,
   FlatList,
 } from 'react-native';
+import BottomSheet from './BottomSheet';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { List } from '../types';
 import { theme } from '../lib/theme';
@@ -29,54 +29,30 @@ export default function AddToListModal({
   const myLists = lists.filter(l => !l.importedFrom);
 
   return (
-    <Modal
-      visible={visible}
-      transparent
-      animationType="slide"
-      onRequestClose={onClose}
-    >
-      <TouchableOpacity
-        style={styles.overlay}
-        activeOpacity={1}
-        onPress={onClose}
-      >
-        <View style={styles.sheet}>
-          <View style={styles.handle} />
-          <View style={styles.header}>
-            <Text style={styles.title}>Add to List</Text>
-            <TouchableOpacity onPress={onClose}>
-              <MaterialCommunityIcons name="close" size={22} color={theme.colors.text} />
-            </TouchableOpacity>
-          </View>
-
-          {myLists.length === 0 ? (
-            <Text style={styles.emptyText}>No lists yet. Create one in the Lists tab.</Text>
-          ) : (
-            <FlatList
-              data={myLists}
-              keyExtractor={item => item.id}
-              renderItem={({ item }) => {
-                const isInList = placeLists.some(l => l.id === item.id);
-                return (
-                  <TouchableOpacity
-                    style={styles.listItem}
-                    onPress={() => onToggle(item.id)}
-                    activeOpacity={0.7}
-                  >
-                    <MaterialCommunityIcons
-                      name={isInList ? 'check-circle' : 'circle-outline'}
-                      size={22}
-                      color={isInList ? theme.colors.primary : theme.colors.textSecondary}
-                    />
-                    <Text style={styles.listName}>{item.name}</Text>
-                  </TouchableOpacity>
-                );
-              }}
-            />
-          )}
-        </View>
-      </TouchableOpacity>
-    </Modal>
+    <BottomSheet visible={visible} onClose={onClose} title="Add to List" maxHeightFraction={0.7}>
+      {myLists.length === 0 ? (
+        <Text style={styles.emptyText}>No lists yet. Create one in the Lists tab.</Text>
+      ) : (
+        <FlatList
+          data={myLists}
+          keyExtractor={item => item.id}
+          keyboardShouldPersistTaps="handled"
+          renderItem={({ item }) => {
+            const isInList = placeLists.some(l => l.id === item.id);
+            return (
+              <TouchableOpacity style={styles.listItem} onPress={() => onToggle(item.id)} activeOpacity={0.7}>
+                <MaterialCommunityIcons
+                  name={isInList ? 'check-circle' : 'circle-outline'}
+                  size={22}
+                  color={isInList ? theme.colors.primary : theme.colors.textSecondary}
+                />
+                <Text style={styles.listName}>{item.name}</Text>
+              </TouchableOpacity>
+            );
+          }}
+        />
+      )}
+    </BottomSheet>
   );
 }
 

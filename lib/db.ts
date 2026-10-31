@@ -1,407 +1,440 @@
-// Local database for Chowder
-// Supports SQLite (native) and IndexedDB (web) with sync capabilities
+// Local database for Chowder.
+// Native: SQLite (expo-sqlite). Web: IndexedDB (lib/indexeddb.ts).
+//
+// Both backends expose the same behaviour from this module. Anything that is
+// derived (place ratings, list ratings, tag ids) is computed here once so the
+// screens never have to re-derive it.
 
 import { Platform } from 'react-native';
 import { Author, Place, List, ListItem, Visit, Dish, Category, Tag, PlaceTag } from '../types';
-import * as indexedDB from './indexeddb';
+import * as idb from './indexeddb';
+import { averageRating, getEffectiveRating } from './rating';
 
-// Helper function to safely access localStorage (web only)
-function getLocalStorage(): any {
-  if (Platform.OS === 'web' && typeof globalThis !== 'undefined') {
-    try {
-      return (globalThis as any).localStorage;
-    } catch {
-      return null;
-    }
-  }
-  return null;
-}
+const isWeb = Platform.OS === 'web';
 
-// Only import SQLite on native platforms
+// Only load SQLite on native platforms
 let SQLite: typeof import('expo-sqlite') | null = null;
-if (Platform.OS !== 'web') {
+if (!isWeb) {
   SQLite = require('expo-sqlite');
 }
 
-// Type for SQLite database - using any to avoid strict type checking issues with expo-sqlite
-type SQLiteDatabase = any;
+type SQLiteDatabase = import('expo-sqlite').SQLiteDatabase;
 let db: SQLiteDatabase | null = null;
 
-// Initialize database
+function sqlite(): SQLiteDatabase {
+  if (!db) throw new Error('Database not initialized');
+  return db;
+}
+
+export function generateId(): string {
+  return `${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
+}
+
+/** SQLite can't bind `undefined`; convert to null and booleans to 0/1. */
+function bindValue(v: unknown): string | number | null {
+  if (v === undefined || v === null) return null;
+  if (typeof v === 'boolean') return v ? 1 : 0;
+  if (typeof v === 'number' || typeof v === 'string') return v;
+  return JSON.stringify(v);
+}
+
+/** Convert SQLite NULLs back to undefined so objects match the web shape. */
+function fromRow<T>(row: any): T {
+  const out: any = {};
+  for (const key of Object.keys(row)) {
+    out[key] = row[key] === null ? undefined : row[key];
+  }
+  if ('orderIndex' in out) {
+    out.order = out.orderIndex;
+    delete out.orderIndex;
+  }
+  return out as T;
+}
+
+/** `order` is a reserved word: categories store it as orderIndex, list_items as [order]. */
+function columnFor(table: string, key: string): string {
+  if (key !== 'order') return key;
+  return table === 'categories' ? 'orderIndex' : '[order]';
+}
+
+async function sqlUpdate(table: string, id: string, updates: Record<string, unknown>, touchUpdatedAt: boolean) {
+  const entries: (readonly [string, unknown])[] = Object.entries(updates).map(([k, v]) => [columnFor(table, k), v] as const);
+  if (touchUpdatedAt) entries.push(['updatedAt', Date.now()]);
+  if (entries.length === 0) return;
+  const setClause = entries.map(([k]) => `${k} = ?`).join(', ');
+  await sqlite().runAsync(
+    `UPDATE ${table} SET ${setClause} WHERE id = ?`,
+    [...entries.map(([, v]) => bindValue(v)), id]
+  );
+}
+
+async function sqlInsert(table: string, row: Record<string, unknown>) {
+  const entries = Object.entries(row).map(([k, v]) => [columnFor(table, k), v] as const);
+  const cols = entries.map(([k]) => k).join(', ');
+  const placeholders = entries.map(() => '?').join(', ');
+  await sqlite().runAsync(
+    `INSERT OR REPLACE INTO ${table} (${cols}) VALUES (${placeholders})`,
+    entries.map(([, v]) => bindValue(v))
+  );
+}
+
+// ===== INITIALIZATION =====
+
+const SCHEMA_VERSION = 2;
+
 export async function initializeDatabase(): Promise<void> {
-  if (Platform.OS === 'web') {
-    console.log('📦 Initializing IndexedDB for web platform');
-    await indexedDB.openDatabase();
-    // Initialize default categories after database is open
+  if (isWeb) {
+    await idb.openDatabase();
+    await migrateLegacyWebTags();
     await initializeDefaultCategories();
     return;
   }
 
-  if (!SQLite) {
-    throw new Error('SQLite module not available on this platform');
+  if (!SQLite) throw new Error('SQLite module not available on this platform');
+
+  db = await SQLite.openDatabaseAsync('chowder.db');
+  await db.execAsync('PRAGMA foreign_keys = ON;');
+
+  await db.execAsync(`
+    CREATE TABLE IF NOT EXISTS author (
+      id TEXT PRIMARY KEY,
+      displayName TEXT NOT NULL,
+      avatarUri TEXT,
+      email TEXT,
+      createdAt INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS places (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      address TEXT,
+      latitude REAL NOT NULL,
+      longitude REAL NOT NULL,
+      categoryId TEXT,
+      notes TEXT,
+      overallRatingManual REAL,
+      ratingMode TEXT,
+      coverImageUri TEXT,
+      createdAt INTEGER NOT NULL,
+      updatedAt INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS lists (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      description TEXT,
+      category TEXT,
+      city TEXT,
+      importedFrom TEXT,
+      importedAt INTEGER,
+      createdAt INTEGER NOT NULL,
+      updatedAt INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS list_items (
+      id TEXT PRIMARY KEY,
+      listId TEXT NOT NULL,
+      placeId TEXT NOT NULL,
+      [order] INTEGER NOT NULL,
+      createdAt INTEGER NOT NULL,
+      FOREIGN KEY(listId) REFERENCES lists(id) ON DELETE CASCADE,
+      FOREIGN KEY(placeId) REFERENCES places(id) ON DELETE CASCADE
+    );
+    CREATE TABLE IF NOT EXISTS visits (
+      id TEXT PRIMARY KEY,
+      placeId TEXT NOT NULL,
+      notes TEXT,
+      photoUri TEXT,
+      createdAt INTEGER NOT NULL,
+      updatedAt INTEGER NOT NULL,
+      FOREIGN KEY(placeId) REFERENCES places(id) ON DELETE CASCADE
+    );
+    CREATE TABLE IF NOT EXISTS dishes (
+      id TEXT PRIMARY KEY,
+      visitId TEXT NOT NULL,
+      name TEXT NOT NULL,
+      categoryId TEXT,
+      rating REAL NOT NULL,
+      notes TEXT,
+      photoUri TEXT,
+      createdAt INTEGER NOT NULL,
+      updatedAt INTEGER NOT NULL,
+      FOREIGN KEY(visitId) REFERENCES visits(id) ON DELETE CASCADE
+    );
+    CREATE TABLE IF NOT EXISTS categories (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      type TEXT NOT NULL CHECK(type IN ('place', 'dish')),
+      parentId TEXT,
+      orderIndex INTEGER DEFAULT 0,
+      createdAt INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS tags (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL UNIQUE,
+      color TEXT,
+      createdAt INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS place_tags (
+      placeId TEXT NOT NULL,
+      tagId TEXT NOT NULL,
+      PRIMARY KEY (placeId, tagId),
+      FOREIGN KEY(placeId) REFERENCES places(id) ON DELETE CASCADE,
+      FOREIGN KEY(tagId) REFERENCES tags(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_list_items_listId ON list_items(listId);
+    CREATE INDEX IF NOT EXISTS idx_list_items_placeId ON list_items(placeId);
+    CREATE INDEX IF NOT EXISTS idx_visits_placeId ON visits(placeId);
+    CREATE INDEX IF NOT EXISTS idx_dishes_visitId ON dishes(visitId);
+  `);
+
+  const versionRow = await db.getFirstAsync<{ user_version: number }>('PRAGMA user_version');
+  const version = versionRow?.user_version ?? 0;
+  if (version < SCHEMA_VERSION) {
+    await migrateNative(version);
+    await db.execAsync(`PRAGMA user_version = ${SCHEMA_VERSION};`);
   }
 
-  try {
-    db = await SQLite.openDatabaseAsync('chowder.db');
-    
-    // Drop and recreate list_items table if it exists with old schema (to fix 'order' column issue)
-    try {
-      await db.execAsync('DROP TABLE IF EXISTS list_items;');
-    } catch (e) {
-      // Ignore errors if table doesn't exist
+  await initializeDefaultCategories();
+}
+
+async function columnNames(table: string): Promise<Set<string>> {
+  const rows = await sqlite().getAllAsync<{ name: string }>(`PRAGMA table_info(${table})`);
+  return new Set(rows.map(r => r.name));
+}
+
+async function migrateNative(fromVersion: number) {
+  const d = sqlite();
+  // Older installs may be missing columns that were added over time.
+  const wanted: Record<string, string[]> = {
+    places: ['coverImageUri TEXT', 'overallRatingManual REAL', 'ratingMode TEXT', 'notes TEXT'],
+    lists: ['importedFrom TEXT', 'importedAt INTEGER', 'description TEXT', 'category TEXT', 'city TEXT'],
+    author: ['avatarUri TEXT', 'email TEXT'],
+  };
+  for (const [table, cols] of Object.entries(wanted)) {
+    const existing = await columnNames(table);
+    for (const col of cols) {
+      if (!existing.has(col.split(' ')[0])) {
+        await d.execAsync(`ALTER TABLE ${table} ADD COLUMN ${col};`);
+      }
     }
-    
-    await db.execAsync(`
-      -- Author table (local profile)
-      CREATE TABLE IF NOT EXISTS author (
-        id TEXT PRIMARY KEY,
-        displayName TEXT NOT NULL,
-        avatarUri TEXT,
-        email TEXT,
-        apiId TEXT,
-        synced INTEGER NOT NULL DEFAULT 0,
-        userId TEXT,
-        createdAt INTEGER NOT NULL
-      );
+  }
 
-      -- Places table
-      CREATE TABLE IF NOT EXISTS places (
-        id TEXT PRIMARY KEY,
-        name TEXT NOT NULL,
-        address TEXT,
-        latitude REAL NOT NULL,
-        longitude REAL NOT NULL,
-        categoryId TEXT,
-        notes TEXT,
-        overallRatingManual REAL,
-        ratingMode TEXT CHECK(ratingMode IN ('aggregate', 'overall')),
-        coverImageUri TEXT,
-        apiId TEXT,
-        synced INTEGER NOT NULL DEFAULT 0,
-        lastSyncedAt INTEGER,
-        userId TEXT,
-        createdAt INTEGER NOT NULL,
-        updatedAt INTEGER NOT NULL
-      );
+  if (fromVersion < 2) {
+    // The old dishes table had `rating INTEGER CHECK(rating >= 1 AND rating <= 5)`,
+    // which rejected half-stars below 1 and anything on the 10-point scale's low end.
+    // Rebuild it without the CHECK, keeping all rows.
+    const dishSql = await d.getFirstAsync<{ sql: string }>(
+      "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'dishes'"
+    );
+    if (dishSql?.sql?.includes('CHECK')) {
+      await d.execAsync(`
+        PRAGMA foreign_keys = OFF;
+        BEGIN;
+        CREATE TABLE dishes_new (
+          id TEXT PRIMARY KEY,
+          visitId TEXT NOT NULL,
+          name TEXT NOT NULL,
+          categoryId TEXT,
+          rating REAL NOT NULL,
+          notes TEXT,
+          photoUri TEXT,
+          createdAt INTEGER NOT NULL,
+          updatedAt INTEGER NOT NULL,
+          FOREIGN KEY(visitId) REFERENCES visits(id) ON DELETE CASCADE
+        );
+        INSERT INTO dishes_new (id, visitId, name, categoryId, rating, notes, photoUri, createdAt, updatedAt)
+          SELECT id, visitId, name, categoryId, rating, notes, photoUri, createdAt, updatedAt FROM dishes;
+        DROP TABLE dishes;
+        ALTER TABLE dishes_new RENAME TO dishes;
+        CREATE INDEX IF NOT EXISTS idx_dishes_visitId ON dishes(visitId);
+        COMMIT;
+        PRAGMA foreign_keys = ON;
+      `);
+    }
 
-      -- Lists table
-      CREATE TABLE IF NOT EXISTS lists (
-        id TEXT PRIMARY KEY,
-        name TEXT NOT NULL,
-        description TEXT,
-        category TEXT,
-        city TEXT,
-        apiId TEXT,
-        synced INTEGER NOT NULL DEFAULT 0,
-        lastSyncedAt INTEGER,
-        userId TEXT,
-        createdAt INTEGER NOT NULL,
-        updatedAt INTEGER NOT NULL
-      );
-
-      -- List items (join table) - using square brackets for 'order' column (reserved keyword)
-      CREATE TABLE IF NOT EXISTS list_items (
-        id TEXT PRIMARY KEY,
-        listId TEXT NOT NULL,
-        placeId TEXT NOT NULL,
-        [order] INTEGER NOT NULL,
-        createdAt INTEGER NOT NULL,
-        FOREIGN KEY(listId) REFERENCES lists(id) ON DELETE CASCADE,
-        FOREIGN KEY(placeId) REFERENCES places(id) ON DELETE CASCADE
-      );
-
-      -- Visits table
-      CREATE TABLE IF NOT EXISTS visits (
-        id TEXT PRIMARY KEY,
-        placeId TEXT NOT NULL,
-        notes TEXT,
-        photoUri TEXT,
-        apiId TEXT,
-        synced INTEGER NOT NULL DEFAULT 0,
-        lastSyncedAt INTEGER,
-        createdAt INTEGER NOT NULL,
-        updatedAt INTEGER NOT NULL,
-        FOREIGN KEY(placeId) REFERENCES places(id) ON DELETE CASCADE
-      );
-
-      -- Dishes table
-      CREATE TABLE IF NOT EXISTS dishes (
-        id TEXT PRIMARY KEY,
-        visitId TEXT NOT NULL,
-        name TEXT NOT NULL,
-        categoryId TEXT,
-        rating INTEGER NOT NULL CHECK(rating >= 1 AND rating <= 5),
-        notes TEXT,
-        photoUri TEXT,
-        apiId TEXT,
-        synced INTEGER NOT NULL DEFAULT 0,
-        lastSyncedAt INTEGER,
-        createdAt INTEGER NOT NULL,
-        updatedAt INTEGER NOT NULL,
-        FOREIGN KEY(visitId) REFERENCES visits(id) ON DELETE CASCADE
-      );
-
-      -- Categories table
-      CREATE TABLE IF NOT EXISTS categories (
-        id TEXT PRIMARY KEY,
-        name TEXT NOT NULL,
-        type TEXT NOT NULL CHECK(type IN ('place', 'dish')),
-        parentId TEXT,
-        orderIndex INTEGER DEFAULT 0,
-        apiId TEXT,
-        synced INTEGER NOT NULL DEFAULT 0,
-        userId TEXT,
-        createdAt INTEGER NOT NULL,
-        FOREIGN KEY(parentId) REFERENCES categories(id) ON DELETE SET NULL
-      );
-
-      -- Tags table
-      CREATE TABLE IF NOT EXISTS tags (
-        id TEXT PRIMARY KEY,
-        name TEXT NOT NULL UNIQUE,
-        color TEXT,
-        apiId TEXT,
-        synced INTEGER NOT NULL DEFAULT 0,
-        userId TEXT,
-        createdAt INTEGER NOT NULL
-      );
-
-      -- Place tags join table
-      CREATE TABLE IF NOT EXISTS place_tags (
-        placeId TEXT NOT NULL,
-        tagId TEXT NOT NULL,
-        PRIMARY KEY (placeId, tagId),
-        FOREIGN KEY(placeId) REFERENCES places(id) ON DELETE CASCADE,
-        FOREIGN KEY(tagId) REFERENCES tags(id) ON DELETE CASCADE
-      );
-
-      -- Indexes
-      CREATE INDEX IF NOT EXISTS idx_list_items_listId ON list_items(listId);
-      CREATE INDEX IF NOT EXISTS idx_list_items_placeId ON list_items(placeId);
-      CREATE INDEX IF NOT EXISTS idx_visits_placeId ON visits(placeId);
-      CREATE INDEX IF NOT EXISTS idx_dishes_visitId ON dishes(visitId);
+    // Foreign keys were never enabled before, so deletes left orphans behind.
+    await d.execAsync(`
+      DELETE FROM list_items WHERE placeId NOT IN (SELECT id FROM places) OR listId NOT IN (SELECT id FROM lists);
+      DELETE FROM visits WHERE placeId NOT IN (SELECT id FROM places);
+      DELETE FROM dishes WHERE visitId NOT IN (SELECT id FROM visits);
+      DELETE FROM place_tags WHERE placeId NOT IN (SELECT id FROM places) OR tagId NOT IN (SELECT id FROM tags);
     `);
-
-    // Migration: Add coverImageUri column to places table if it doesn't exist
-    try {
-      await db.execAsync('ALTER TABLE places ADD COLUMN coverImageUri TEXT;');
-    } catch (e: any) {
-      // Column already exists, ignore error
-      if (!e.message?.includes('duplicate column')) {
-        console.warn('Migration warning:', e);
-      }
-    }
-
-    // Migration: Add cloudflareImageId column to places table if it doesn't exist
-    try {
-      await db.execAsync('ALTER TABLE places ADD COLUMN cloudflareImageId TEXT;');
-    } catch (e: any) {
-      if (!e.message?.includes('duplicate column')) {
-        console.warn('Migration warning:', e);
-      }
-    }
-
-    // Migration: Remove rating column from visits table if it exists
-    try {
-      await db.execAsync('ALTER TABLE visits DROP COLUMN rating;');
-    } catch (e: any) {
-      // Column doesn't exist or already removed, ignore error
-      if (!e.message?.includes('no such column')) {
-        console.warn('Migration warning:', e);
-      }
-    }
-
-    // Migration: Add importedFrom / importedAt to lists
-    for (const col of ['importedFrom TEXT', 'importedAt INTEGER']) {
-      try {
-        await db.execAsync(`ALTER TABLE lists ADD COLUMN ${col};`);
-      } catch (e: any) {
-        if (!e.message?.includes('duplicate column name')) {
-          console.warn('Migration warning:', e);
-        }
-      }
-    }
-
-    // Migration: Add sync fields to existing tables
-    const syncMigrations = [
-      { table: 'author', columns: ['email TEXT', 'apiId TEXT', 'synced INTEGER NOT NULL DEFAULT 0', 'userId TEXT'] },
-      { table: 'places', columns: ['apiId TEXT', 'synced INTEGER NOT NULL DEFAULT 0', 'lastSyncedAt INTEGER', 'userId TEXT'] },
-      { table: 'lists', columns: ['apiId TEXT', 'synced INTEGER NOT NULL DEFAULT 0', 'lastSyncedAt INTEGER', 'userId TEXT'] },
-      { table: 'visits', columns: ['apiId TEXT', 'synced INTEGER NOT NULL DEFAULT 0', 'lastSyncedAt INTEGER'] },
-      { table: 'dishes', columns: ['apiId TEXT', 'synced INTEGER NOT NULL DEFAULT 0', 'lastSyncedAt INTEGER'] },
-      { table: 'categories', columns: ['apiId TEXT', 'synced INTEGER NOT NULL DEFAULT 0', 'userId TEXT'] },
-      { table: 'tags', columns: ['apiId TEXT', 'synced INTEGER NOT NULL DEFAULT 0', 'userId TEXT'] },
-    ];
-
-    for (const migration of syncMigrations) {
-      for (const column of migration.columns) {
-        try {
-          await db.execAsync(`ALTER TABLE ${migration.table} ADD COLUMN ${column};`);
-        } catch (e: any) {
-          // Column already exists, ignore error
-          if (!e.message?.includes('duplicate column')) {
-            console.warn(`Migration warning for ${migration.table}.${column}:`, e);
-          }
-        }
-      }
-    }
-
-    console.log('✅ Database initialized');
-    
-    // Initialize default categories if they don't exist (already done for web above)
-    await initializeDefaultCategories();
-  } catch (error) {
-    console.error('❌ Database initialization failed:', error);
-    throw error;
   }
 }
 
-// Initialize default place categories
-export async function initializeDefaultCategories(): Promise<void> {
-  const defaultCategories = [
-    'Cantonese',
-    'Sichuan',
-    'Chinese (General)',
-    'Japanese (general)',
-    'Thai (General)',
-    'Vietnamese (General)',
-    'Pho',
-    'Ramen',
-    'Indian (General)',
-    'Bengali',
-    'Halal',
-    'Kosher',
-    'Italian (General)',
-    'Pizza',
-    'Bagels',
-  ];
-
+/**
+ * Earlier web builds wrote tags to localStorage while reading them from
+ * IndexedDB, so tags appeared to vanish. Recover anything stranded there.
+ */
+async function migrateLegacyWebTags() {
+  const storage: Storage | undefined = (globalThis as any).localStorage;
+  if (!storage) return;
   try {
-    if (Platform.OS === 'web') {
-      const existing = await getAllCategories();
-      const existingNames = new Set(existing.map(c => c.name));
-      
-      for (let i = 0; i < defaultCategories.length; i++) {
-        const name = defaultCategories[i];
-        if (!existingNames.has(name)) {
-          const category: Category = {
-            id: generateId(),
-            name,
-            type: 'place',
-            order: i,
-            apiId: undefined,
-            synced: false,
-            createdAt: Date.now(),
-          };
-          await indexedDB.putCategory(category);
+    const legacyTags = storage.getItem('chowder_tags');
+    const existing = await idb.getAllTags();
+    const byName = new Map(existing.map(t => [t.name.toLowerCase(), t]));
+    const idRemap = new Map<string, string>();
+
+    if (legacyTags) {
+      for (const tag of JSON.parse(legacyTags) as Tag[]) {
+        const dupe = byName.get(tag.name.toLowerCase());
+        if (dupe) {
+          idRemap.set(tag.id, dupe.id);
+        } else {
+          await idb.putTag(tag);
+          byName.set(tag.name.toLowerCase(), tag);
         }
       }
-      return;
+      storage.removeItem('chowder_tags');
     }
 
-    if (!db) return;
+    const keys: string[] = [];
+    for (let i = 0; i < storage.length; i++) {
+      const key = storage.key(i);
+      if (key?.startsWith('chowder_place_tags_')) keys.push(key);
+    }
+    for (const key of keys) {
+      const placeId = key.slice('chowder_place_tags_'.length);
+      const tagIds = JSON.parse(storage.getItem(key) || '[]') as string[];
+      for (const tagId of tagIds) {
+        await idb.addTagToPlace(placeId, idRemap.get(tagId) ?? tagId);
+      }
+      storage.removeItem(key);
+    }
+  } catch (error) {
+    console.warn('Legacy tag migration skipped:', error);
+  }
+}
 
-    // Check which categories already exist
-    const existing = (await db.getAllAsync('SELECT * FROM categories WHERE type = ?', ['place'])) as Category[];
-    const existingNames = new Set(existing.map((c: Category) => c.name));
+const DEFAULT_PLACE_CATEGORIES = [
+  'Cantonese',
+  'Sichuan',
+  'Chinese (General)',
+  'Japanese (general)',
+  'Thai (General)',
+  'Vietnamese (General)',
+  'Pho',
+  'Ramen',
+  'Indian (General)',
+  'Bengali',
+  'Halal',
+  'Kosher',
+  'Italian (General)',
+  'Pizza',
+  'Bagels',
+];
 
-    // Insert missing default categories
-    for (let i = 0; i < defaultCategories.length; i++) {
-      const name = defaultCategories[i];
-      if (!existingNames.has(name)) {
-        await db.runAsync(
-          'INSERT INTO categories (id, name, type, orderIndex, createdAt) VALUES (?, ?, ?, ?, ?)',
-          [generateId(), name, 'place', i, Date.now()]
-        );
+const DEFAULTS_SEEDED_KEY = 'chowder_default_categories_seeded';
+
+/**
+ * Seed default place categories once. Previously this ran on every launch,
+ * so categories the user deleted kept coming back.
+ * Pass `force` to restore any missing defaults on demand.
+ */
+export async function initializeDefaultCategories(force = false): Promise<void> {
+  try {
+    const existing = await getAllCategories();
+    if (!force) {
+      if (isWeb) {
+        const storage: Storage | undefined = (globalThis as any).localStorage;
+        if (storage?.getItem(DEFAULTS_SEEDED_KEY)) return;
+        // Existing installs already have their categories; don't resurrect deleted ones.
+        if (existing.length > 0) {
+          storage?.setItem(DEFAULTS_SEEDED_KEY, '1');
+          return;
+        }
+      } else if (existing.length > 0) {
+        return;
       }
     }
+    const existingNames = new Set(existing.filter(c => c.type === 'place').map(c => c.name));
+    for (let i = 0; i < DEFAULT_PLACE_CATEGORIES.length; i++) {
+      const name = DEFAULT_PLACE_CATEGORIES[i];
+      if (!existingNames.has(name)) {
+        await createCategory(name, 'place', undefined, i);
+      }
+    }
+    if (isWeb) (globalThis as any).localStorage?.setItem(DEFAULTS_SEEDED_KEY, '1');
   } catch (error) {
     console.error('Failed to initialize default categories:', error);
   }
 }
 
-// Helper to generate IDs
-function generateId(): string {
-  return `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-}
-
-// ===== AUTHOR QUERIES =====
+// ===== AUTHOR =====
 
 export async function getAuthor(): Promise<Author | null> {
-  if (Platform.OS === 'web') {
-    return indexedDB.getAuthor();
-  }
-  
-  if (!db) throw new Error('Database not initialized');
-  const result = await db.getFirstAsync('SELECT * FROM author LIMIT 1') as any;
-  if (!result) return null;
-  return {
-    ...result,
-    synced: Boolean(result.synced),
-  } as Author;
+  if (isWeb) return idb.getAuthor();
+  const row = await sqlite().getFirstAsync('SELECT * FROM author ORDER BY createdAt ASC LIMIT 1');
+  return row ? fromRow<Author>(row) : null;
 }
 
-export async function createAuthor(displayName: string, avatarUri?: string, email?: string, userId?: string): Promise<Author> {
-  const id = generateId();
-  const now = Date.now();
-  const author: Author = { 
-    id, 
-    displayName, 
-    avatarUri, 
-    email,
-    apiId: undefined,
-    synced: false,
-    userId,
-    createdAt: now 
-  };
-
-  if (Platform.OS === 'web') {
-    await indexedDB.putAuthor(author);
-    return author;
+export async function createAuthor(displayName: string, avatarUri?: string): Promise<Author> {
+  const existing = await getAuthor();
+  if (existing) {
+    // Only ever one local profile.
+    await updateAuthor({ displayName, avatarUri });
+    return { ...existing, displayName, avatarUri };
   }
-
-  if (!db) throw new Error('Database not initialized');
-  await db.runAsync(
-    'INSERT INTO author (id, displayName, avatarUri, email, apiId, synced, userId, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-    [id, displayName, avatarUri || null, email || null, null, 0, userId || null, now]
-  );
+  const author: Author = { id: generateId(), displayName, avatarUri, createdAt: Date.now() };
+  if (isWeb) {
+    await idb.putAuthor(author);
+  } else {
+    await sqlInsert('author', { ...author });
+  }
   return author;
 }
 
-// Mark author as synced (internal use for sync service)
-export async function markAuthorAsSynced(authorId: string, apiId: string): Promise<void> {
-  if (Platform.OS === 'web') {
-    const author = await indexedDB.getAuthor();
-    if (author && author.id === authorId) {
-      author.apiId = apiId;
-      author.synced = true;
-      await indexedDB.putAuthor(author);
-    }
-  } else {
-    if (!db) throw new Error('Database not initialized');
-    await db.runAsync(
-      'UPDATE author SET apiId = ?, synced = ? WHERE id = ?',
-      [apiId, 1, authorId]
-    );
-  }
-}
-
-export async function updateAuthor(updates: Partial<Pick<Author, 'displayName' | 'avatarUri' | 'email'>>): Promise<void> {
-  if (Platform.OS === 'web') {
-    const author = await getAuthor();
-    if (!author) throw new Error('Author not found');
-    const updated = { ...author, ...updates, synced: false };
-    await indexedDB.putAuthor(updated);
+export async function updateAuthor(updates: Partial<Pick<Author, 'displayName' | 'avatarUri'>>): Promise<void> {
+  const author = await getAuthor();
+  if (!author) throw new Error('Author not found');
+  if (isWeb) {
+    await idb.putAuthor({ ...author, ...updates });
     return;
   }
-
-  if (!db) throw new Error('Database not initialized');
-  const fields = Object.keys(updates).map(k => `${k} = ?`).join(', ');
-  const values = [...Object.values(updates), 0]; // Set synced to false
-  await db.runAsync(`UPDATE author SET ${fields}, synced = ?`, values);
+  await sqlUpdate('author', author.id, updates, false);
 }
 
-// ===== PLACE QUERIES =====
+// ===== PLACES =====
+
+/** Attach derived fields (tagIds, overallRating) to raw place rows. */
+async function hydratePlaces(places: Place[]): Promise<Place[]> {
+  if (places.length === 0) return places;
+  const [visits, dishes, placeTags] = await Promise.all([getAllVisits(), getAllDishes(), getAllPlaceTags()]);
+  const placeIdByVisit = new Map(visits.map(v => [v.id, v.placeId]));
+  const dishesByPlace = new Map<string, Dish[]>();
+  for (const dish of dishes) {
+    const placeId = placeIdByVisit.get(dish.visitId);
+    if (!placeId) continue;
+    if (!dishesByPlace.has(placeId)) dishesByPlace.set(placeId, []);
+    dishesByPlace.get(placeId)!.push(dish);
+  }
+  const tagsByPlace = new Map<string, string[]>();
+  for (const pt of placeTags) {
+    if (!tagsByPlace.has(pt.placeId)) tagsByPlace.set(pt.placeId, []);
+    tagsByPlace.get(pt.placeId)!.push(pt.tagId);
+  }
+  return places.map(p => ({
+    ...p,
+    tagIds: tagsByPlace.get(p.id) ?? [],
+    overallRating: getEffectiveRating(p, dishesByPlace.get(p.id) ?? []),
+  }));
+}
+
+async function getRawPlaces(): Promise<Place[]> {
+  if (isWeb) return idb.getAllPlaces();
+  const rows = await sqlite().getAllAsync('SELECT * FROM places');
+  return rows.map(r => fromRow<Place>(r));
+}
+
+async function getRawPlace(placeId: string): Promise<Place | null> {
+  if (isWeb) return idb.getPlace(placeId);
+  const row = await sqlite().getFirstAsync('SELECT * FROM places WHERE id = ?', [placeId]);
+  return row ? fromRow<Place>(row) : null;
+}
+
+/** Strip derived fields before persisting. */
+function storablePlace(place: Place): Place {
+  const { overallRating, tagIds, ...rest } = place;
+  return rest as Place;
+}
 
 export async function createPlace(
   name: string,
@@ -409,856 +442,428 @@ export async function createPlace(
   longitude: number,
   address?: string,
   categoryId?: string,
-  notes?: string,
-  userId?: string
+  notes?: string
 ): Promise<Place> {
-  const id = generateId();
   const now = Date.now();
-  const place: Place = { 
-    id, 
-    name, 
-    address, 
-    latitude, 
-    longitude, 
-    categoryId, 
-    notes, 
-    ratingMode: 'overall', 
-    apiId: undefined,
-    synced: false,
-    userId,
-    createdAt: now, 
-    updatedAt: now 
+  const place: Place = {
+    id: generateId(),
+    name,
+    address,
+    latitude,
+    longitude,
+    categoryId,
+    notes,
+    ratingMode: 'overall',
+    createdAt: now,
+    updatedAt: now,
   };
-
-  if (Platform.OS === 'web') {
-    await indexedDB.putPlace(place);
-    return place;
+  if (isWeb) {
+    await idb.putPlace(place);
+  } else {
+    await sqlInsert('places', { ...place });
   }
-
-  if (!db) throw new Error('Database not initialized');
-  await db.runAsync(
-    'INSERT INTO places (id, name, address, latitude, longitude, categoryId, notes, overallRatingManual, ratingMode, coverImageUri, apiId, synced, userId, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-    [id, name, address || null, latitude, longitude, categoryId || null, notes || null, null, 'overall', null, null, 0, userId || null, now, now]
-  );
-  return place;
+  return { ...place, tagIds: [] };
 }
 
 export async function getAllPlaces(): Promise<Place[]> {
-  if (Platform.OS === 'web') {
-    const places = await indexedDB.getAllPlaces();
-    // Load tagIds for each place
-    for (const place of places) {
-      place.tagIds = await getPlaceTags(place.id);
-    }
-    return places.sort((a, b) => b.createdAt - a.createdAt);
-  }
-
-  if (!db) throw new Error('Database not initialized');
-  const results = await db.getAllAsync('SELECT * FROM places ORDER BY createdAt DESC') as any[];
-  return results.map(r => ({
-    ...r,
-    synced: Boolean(r.synced),
-  })) as Place[];
+  const places = await hydratePlaces(await getRawPlaces());
+  return places.sort((a, b) => b.createdAt - a.createdAt);
 }
 
 export async function getPlace(placeId: string): Promise<Place | null> {
-  if (Platform.OS === 'web') {
-    const place = await indexedDB.getPlace(placeId);
-    if (place) {
-      place.tagIds = await getPlaceTags(placeId);
-    }
-    return place;
-  }
-
-  if (!db) throw new Error('Database not initialized');
-  const result = await db.getFirstAsync('SELECT * FROM places WHERE id = ?', [placeId]) as any;
-  if (!result) return null;
-  const place: Place = {
-    ...result,
-    synced: Boolean(result.synced),
-  };
-  place.tagIds = await getPlaceTags(placeId);
-  return place;
+  const place = await getRawPlace(placeId);
+  if (!place) return null;
+  const [hydrated] = await hydratePlaces([place]);
+  return hydrated;
 }
 
-export async function updatePlace(placeId: string, updates: Partial<Pick<Place, 'name' | 'address' | 'categoryId' | 'notes' | 'overallRatingManual' | 'ratingMode' | 'coverImageUri' | 'cloudflareImageId'>>): Promise<void> {
-  if (Platform.OS === 'web') {
-    const place = await indexedDB.getPlace(placeId);
+export type PlaceUpdates = Partial<Pick<Place, 'name' | 'address' | 'categoryId' | 'notes' | 'overallRatingManual' | 'ratingMode' | 'coverImageUri'>>;
+
+export async function updatePlace(placeId: string, updates: PlaceUpdates): Promise<void> {
+  if (isWeb) {
+    const place = await idb.getPlace(placeId);
     if (!place) throw new Error('Place not found');
-    const updated = { ...place, ...updates, synced: false, updatedAt: Date.now() };
-    await indexedDB.putPlace(updated);
+    await idb.putPlace(storablePlace({ ...place, ...updates, updatedAt: Date.now() }));
     return;
   }
-
-  if (!db) throw new Error('Database not initialized');
-  const fields = Object.keys(updates).map(k => `${k} = ?`).join(', ');
-  const values = [...Object.values(updates), 0, Date.now(), placeId]; // Set synced to false
-  await db.runAsync(`UPDATE places SET ${fields}, synced = ?, updatedAt = ? WHERE id = ?`, values);
-}
-
-// Mark place as synced (internal use for sync service)
-export async function markPlaceAsSynced(placeId: string, apiId: string, lastSyncedAt: number): Promise<void> {
-  if (Platform.OS === 'web') {
-    const place = await indexedDB.getPlace(placeId);
-    if (place) {
-      place.apiId = apiId;
-      place.synced = true;
-      place.lastSyncedAt = lastSyncedAt;
-      await indexedDB.putPlace(place);
-    }
-  } else {
-    if (!db) throw new Error('Database not initialized');
-    await db.runAsync(
-      'UPDATE places SET apiId = ?, synced = ?, lastSyncedAt = ? WHERE id = ?',
-      [apiId, 1, lastSyncedAt, placeId]
-    );
-  }
+  await sqlUpdate('places', placeId, updates, true);
 }
 
 export async function deletePlace(placeId: string): Promise<void> {
-  if (Platform.OS === 'web') {
-    await indexedDB.deletePlace(placeId);
-    // Also remove list items and visits (cascade handled by sync service)
-    const listItems = await indexedDB.getAllListItems();
-    for (const item of listItems.filter(li => li.placeId === placeId)) {
-      await indexedDB.deleteListItem(item.id);
+  if (isWeb) {
+    const visits = await idb.getVisitsForPlace(placeId);
+    for (const visit of visits) await deleteVisit(visit.id);
+    for (const item of (await idb.getAllListItems()).filter(li => li.placeId === placeId)) {
+      await idb.deleteListItem(item.id);
     }
-    const visits = await indexedDB.getAllVisits();
-    for (const visit of visits.filter(v => v.placeId === placeId)) {
-      await indexedDB.deleteVisit(visit.id);
+    for (const tagId of await idb.getPlaceTags(placeId)) {
+      await idb.removeTagFromPlace(placeId, tagId);
     }
+    await idb.deletePlace(placeId);
     return;
   }
-
-  if (!db) throw new Error('Database not initialized');
-  await db.runAsync('DELETE FROM places WHERE id = ?', [placeId]);
+  // ON DELETE CASCADE handles list items, visits → dishes, and place tags.
+  await sqlite().runAsync('DELETE FROM places WHERE id = ?', [placeId]);
 }
 
-// ===== LIST QUERIES =====
+// ===== LISTS =====
 
-export async function createList(name: string, description?: string, category?: string, city?: string, userId?: string, importedFrom?: string, importedAt?: number): Promise<List> {
-  const id = generateId();
+async function getRawLists(): Promise<List[]> {
+  if (isWeb) return idb.getAllLists();
+  const rows = await sqlite().getAllAsync('SELECT * FROM lists');
+  return rows.map(r => fromRow<List>(r));
+}
+
+export async function createList(
+  name: string,
+  description?: string,
+  category?: string,
+  city?: string,
+  importedFrom?: string,
+  importedAt?: number
+): Promise<List> {
   const now = Date.now();
-  const list: List = { 
-    id, 
-    name, 
-    description, 
-    category, 
-    city, 
+  const list: List = {
+    id: generateId(),
+    name,
+    description,
+    category,
+    city,
     importedFrom,
     importedAt,
-    apiId: undefined,
-    synced: false,
-    userId,
-    createdAt: now, 
-    updatedAt: now 
+    createdAt: now,
+    updatedAt: now,
   };
-
-  if (Platform.OS === 'web') {
-    await indexedDB.putList(list);
-    return list;
+  if (isWeb) {
+    await idb.putList(list);
+  } else {
+    await sqlInsert('lists', { ...list });
   }
-
-  if (!db) throw new Error('Database not initialized');
-  await db.runAsync(
-    'INSERT INTO lists (id, name, description, category, city, importedFrom, importedAt, apiId, synced, userId, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-    [id, name, description || null, category || null, city || null, importedFrom || null, importedAt || null, null, 0, userId || null, now, now]
-  );
   return list;
 }
 
 export async function getAllLists(): Promise<List[]> {
-  if (Platform.OS === 'web') {
-    const lists = await indexedDB.getAllLists();
-    // Calculate ratings from places
-    const places = await getAllPlaces();
-    const listItems = await indexedDB.getAllListItems();
-    lists.forEach(list => {
-      const items = listItems.filter(li => li.listId === list.id);
-      const listPlaces = items.map(li => places.find(p => p.id === li.placeId)).filter(Boolean) as Place[];
-      if (listPlaces.length > 0 && listPlaces.some(p => p.overallRating)) {
-        const ratings = listPlaces.map(p => p.overallRating || 0).filter(r => r > 0);
-        if (ratings.length > 0) {
-          list.overallRating = ratings.reduce((sum, r) => sum + r, 0) / ratings.length;
-        }
-      }
-    });
-    return lists.sort((a, b) => b.updatedAt - a.updatedAt);
-  }
-
-  if (!db) throw new Error('Database not initialized');
-  const results = await db.getAllAsync('SELECT * FROM lists ORDER BY updatedAt DESC') as any[];
-  const lists = results.map(r => ({
-    ...r,
-    synced: Boolean(r.synced),
-  })) as List[];
-  // Calculate ratings
-  for (const list of lists) {
-    const items = await getListItems(list.id);
-    if (items.length > 0) {
-      const placeIds = items.map((li: ListItem) => li.placeId);
-      const places = await Promise.all(placeIds.map((id: string) => getPlace(id)));
-      const ratings = places.map((p: Place | null) => p?.overallRating).filter((r: number | undefined): r is number => r !== undefined);
-      if (ratings.length > 0) {
-        list.overallRating = ratings.reduce((sum: number, r: number) => sum + r, 0) / ratings.length;
-      }
-    }
-  }
-  return lists;
+  const [lists, items, places] = await Promise.all([getRawLists(), getAllListItems(), getAllPlaces()]);
+  const ratingByPlace = new Map(places.map(p => [p.id, p.overallRating]));
+  return lists
+    .map(list => {
+      const listItems = items.filter(li => li.listId === list.id && ratingByPlace.has(li.placeId));
+      const ratings = listItems
+        .map(li => ratingByPlace.get(li.placeId))
+        .filter((r): r is number => r !== undefined);
+      return { ...list, overallRating: averageRating(ratings), placeCount: listItems.length };
+    })
+    .sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
 export async function getList(listId: string): Promise<List | null> {
-  if (Platform.OS === 'web') {
-    return indexedDB.getList(listId);
-  }
-
-  if (!db) throw new Error('Database not initialized');
-  const result = await db.getFirstAsync('SELECT * FROM lists WHERE id = ?', [listId]) as any;
-  if (!result) return null;
-  return {
-    ...result,
-    synced: Boolean(result.synced),
-  } as List;
+  if (isWeb) return idb.getList(listId);
+  const row = await sqlite().getFirstAsync('SELECT * FROM lists WHERE id = ?', [listId]);
+  return row ? fromRow<List>(row) : null;
 }
 
 export async function updateList(listId: string, updates: Partial<Pick<List, 'name' | 'description' | 'category' | 'city'>>): Promise<void> {
-  if (Platform.OS === 'web') {
-    const list = await indexedDB.getList(listId);
+  if (isWeb) {
+    const list = await idb.getList(listId);
     if (!list) throw new Error('List not found');
-    const updated = { ...list, ...updates, synced: false, updatedAt: Date.now() };
-    await indexedDB.putList(updated);
+    const { overallRating, placeCount, ...stored } = { ...list, ...updates, updatedAt: Date.now() };
+    await idb.putList(stored);
     return;
   }
-
-  if (!db) throw new Error('Database not initialized');
-  const fields = Object.keys(updates).map(k => `${k} = ?`).join(', ');
-  const values = [...Object.values(updates), 0, Date.now(), listId]; // Set synced to false
-  await db.runAsync(`UPDATE lists SET ${fields}, synced = ?, updatedAt = ? WHERE id = ?`, values);
-}
-
-// Mark list as synced (internal use for sync service)
-export async function markListAsSynced(listId: string, apiId: string, lastSyncedAt: number): Promise<void> {
-  if (Platform.OS === 'web') {
-    const list = await indexedDB.getList(listId);
-    if (list) {
-      list.apiId = apiId;
-      list.synced = true;
-      list.lastSyncedAt = lastSyncedAt;
-      await indexedDB.putList(list);
-    }
-  } else {
-    if (!db) throw new Error('Database not initialized');
-    await db.runAsync(
-      'UPDATE lists SET apiId = ?, synced = ?, lastSyncedAt = ? WHERE id = ?',
-      [apiId, 1, lastSyncedAt, listId]
-    );
-  }
+  await sqlUpdate('lists', listId, updates, true);
 }
 
 export async function deleteList(listId: string): Promise<void> {
-  if (Platform.OS === 'web') {
-    // deleteList in indexedDB now handles cascade deletion of list items
-    await indexedDB.deleteList(listId);
+  if (isWeb) {
+    await idb.deleteList(listId); // also removes its list items
     return;
   }
-
-  if (!db) throw new Error('Database not initialized');
-  // Delete list items first (CASCADE should handle this, but being explicit)
-  await db.runAsync('DELETE FROM list_items WHERE listId = ?', [listId]);
-  // Then delete the list
-  await db.runAsync('DELETE FROM lists WHERE id = ?', [listId]);
+  await sqlite().runAsync('DELETE FROM lists WHERE id = ?', [listId]);
 }
 
 export async function getImportedFriendLists(): Promise<List[]> {
-  if (Platform.OS === 'web') {
-    const allLists = await indexedDB.getAllLists();
-    return allLists.filter(l => !!l.importedFrom).sort((a, b) => (b.importedAt || 0) - (a.importedAt || 0));
-  }
-
-  if (!db) throw new Error('Database not initialized');
-  const results = await db.getAllAsync(
-    'SELECT * FROM lists WHERE importedFrom IS NOT NULL ORDER BY importedAt DESC'
-  ) as any[];
-  return results.map(r => ({
-    ...r,
-    synced: Boolean(r.synced),
-  })) as List[];
+  const lists = await getRawLists();
+  return lists.filter(l => !!l.importedFrom).sort((a, b) => (b.importedAt || 0) - (a.importedAt || 0));
 }
 
-// ===== LIST ITEM QUERIES =====
+// ===== LIST ITEMS =====
 
 export async function addPlaceToList(listId: string, placeId: string): Promise<void> {
-  const newItem: ListItem = {
+  const existing = await getListItems(listId);
+  if (existing.some(li => li.placeId === placeId)) return; // already there
+  const item: ListItem = {
     id: generateId(),
     listId,
     placeId,
-    order: 0, // Will be calculated
-    createdAt: Date.now()
+    order: existing.length > 0 ? Math.max(...existing.map(li => li.order)) + 1 : 0,
+    createdAt: Date.now(),
   };
-
-  if (Platform.OS === 'web') {
-    const listItems = await indexedDB.getAllListItems();
-    const existing = listItems.filter(li => li.listId === listId);
-    newItem.order = existing.length > 0 ? Math.max(...existing.map(li => li.order)) + 1 : 0;
-    await indexedDB.putListItem(newItem);
-    // Update list updatedAt
-    const list = await getList(listId);
-    if (list) await updateList(listId, {});
-    return;
+  if (isWeb) {
+    await idb.putListItem(item);
+  } else {
+    await sqlInsert('list_items', { ...item });
   }
-
-  if (!db) throw new Error('Database not initialized');
-  const existing = (await db.getAllAsync(
-    'SELECT * FROM list_items WHERE listId = ? ORDER BY [order] DESC LIMIT 1',
-    [listId]
-  )) as ListItem[];
-  newItem.order = existing.length > 0 ? (existing[0].order + 1) : 0;
-  await db.runAsync(
-    'INSERT INTO list_items (id, listId, placeId, [order], createdAt) VALUES (?, ?, ?, ?, ?)',
-    [newItem.id, listId, placeId, newItem.order, newItem.createdAt]
-  );
   await updateList(listId, {});
 }
 
 export async function removePlaceFromList(listId: string, placeId: string): Promise<void> {
-  if (Platform.OS === 'web') {
-    const listItems = await indexedDB.getAllListItems();
-    const item = listItems.find(li => li.listId === listId && li.placeId === placeId);
-    if (item) {
-      await indexedDB.deleteListItem(item.id);
+  if (isWeb) {
+    for (const item of (await idb.getListItems(listId)).filter(li => li.placeId === placeId)) {
+      await idb.deleteListItem(item.id);
     }
-    await updateList(listId, {});
-    return;
+  } else {
+    await sqlite().runAsync('DELETE FROM list_items WHERE listId = ? AND placeId = ?', [listId, placeId]);
   }
-
-  if (!db) throw new Error('Database not initialized');
-  await db.runAsync('DELETE FROM list_items WHERE listId = ? AND placeId = ?', [listId, placeId]);
   await updateList(listId, {});
 }
 
 export async function getListItems(listId: string): Promise<ListItem[]> {
-  if (Platform.OS === 'web') {
-    return indexedDB.getListItems(listId);
+  if (isWeb) {
+    return (await idb.getListItems(listId)).sort((a, b) => a.order - b.order);
   }
-
-  if (!db) throw new Error('Database not initialized');
-  return (await db.getAllAsync(
-    'SELECT * FROM list_items WHERE listId = ? ORDER BY [order] ASC',
-    [listId]
-  )) as ListItem[];
+  const rows = await sqlite().getAllAsync('SELECT * FROM list_items WHERE listId = ? ORDER BY [order] ASC', [listId]);
+  return rows.map(r => fromRow<ListItem>(r));
 }
 
 export async function getAllListItems(): Promise<ListItem[]> {
-  if (Platform.OS === 'web') {
-    return indexedDB.getAllListItems();
-  }
-
-  if (!db) throw new Error('Database not initialized');
-  return (await db.getAllAsync('SELECT * FROM list_items')) as ListItem[];
+  if (isWeb) return idb.getAllListItems();
+  const rows = await sqlite().getAllAsync('SELECT * FROM list_items');
+  return rows.map(r => fromRow<ListItem>(r));
 }
 
-// ===== VISIT QUERIES =====
+/** Ids of every list that contains the given place. */
+export async function getListIdsForPlace(placeId: string): Promise<string[]> {
+  const items = await getAllListItems();
+  return [...new Set(items.filter(li => li.placeId === placeId).map(li => li.listId))];
+}
+
+// ===== VISITS =====
 
 export async function createVisit(placeId: string, notes?: string, photoUri?: string): Promise<Visit> {
-  const id = generateId();
   const now = Date.now();
-  const visit: Visit = { 
-    id, 
-    placeId, 
-    notes, 
-    photoUri, 
-    apiId: undefined,
-    synced: false,
-    createdAt: now, 
-    updatedAt: now 
-  };
-
-  if (Platform.OS === 'web') {
-    await indexedDB.putVisit(visit);
-    return visit;
+  const visit: Visit = { id: generateId(), placeId, notes, photoUri, createdAt: now, updatedAt: now };
+  if (isWeb) {
+    await idb.putVisit(visit);
+  } else {
+    await sqlInsert('visits', { ...visit });
   }
-
-  if (!db) throw new Error('Database not initialized');
-  await db.runAsync(
-    'INSERT INTO visits (id, placeId, notes, photoUri, apiId, synced, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-    [id, placeId, notes || null, photoUri || null, null, 0, now, now]
-  );
   return visit;
 }
 
+/** Newest first. */
 export async function getVisitsForPlace(placeId: string): Promise<Visit[]> {
-  if (Platform.OS === 'web') {
-    return indexedDB.getVisitsForPlace(placeId);
+  if (isWeb) {
+    return (await idb.getVisitsForPlace(placeId)).sort((a, b) => b.createdAt - a.createdAt);
   }
-
-  if (!db) throw new Error('Database not initialized');
-  const results = await db.getAllAsync(
-    'SELECT * FROM visits WHERE placeId = ? ORDER BY createdAt DESC',
-    [placeId]
-  ) as any[];
-  return results.map(r => ({
-    ...r,
-    synced: Boolean(r.synced),
-  })) as Visit[];
+  const rows = await sqlite().getAllAsync('SELECT * FROM visits WHERE placeId = ? ORDER BY createdAt DESC', [placeId]);
+  return rows.map(r => fromRow<Visit>(r));
 }
 
 export async function updateVisit(visitId: string, updates: Partial<Pick<Visit, 'notes' | 'photoUri'>>): Promise<void> {
-  if (Platform.OS === 'web') {
-    const visit = await indexedDB.getVisit(visitId);
+  if (isWeb) {
+    const visit = await idb.getVisit(visitId);
     if (!visit) throw new Error('Visit not found');
-    const updated = { ...visit, ...updates, synced: false, updatedAt: Date.now() };
-    await indexedDB.putVisit(updated);
+    await idb.putVisit({ ...visit, ...updates, updatedAt: Date.now() });
     return;
   }
-
-  if (!db) throw new Error('Database not initialized');
-  const fields = Object.keys(updates).map(k => `${k} = ?`).join(', ');
-  const values = [...Object.values(updates), 0, Date.now(), visitId]; // Set synced to false
-  await db.runAsync(`UPDATE visits SET ${fields}, synced = ?, updatedAt = ? WHERE id = ?`, values);
+  await sqlUpdate('visits', visitId, updates, true);
 }
 
-// Mark visit as synced (internal use for sync service)
-export async function markVisitAsSynced(visitId: string, apiId: string, lastSyncedAt: number): Promise<void> {
-  if (Platform.OS === 'web') {
-    const visit = await indexedDB.getVisit(visitId);
-    if (visit) {
-      visit.apiId = apiId;
-      visit.synced = true;
-      visit.lastSyncedAt = lastSyncedAt;
-      await indexedDB.putVisit(visit);
-    }
-  } else {
-    if (!db) throw new Error('Database not initialized');
-    await db.runAsync(
-      'UPDATE visits SET apiId = ?, synced = ?, lastSyncedAt = ? WHERE id = ?',
-      [apiId, 1, lastSyncedAt, visitId]
-    );
+export async function deleteVisit(visitId: string): Promise<void> {
+  if (isWeb) {
+    for (const dish of await idb.getDishesForVisit(visitId)) await idb.deleteDish(dish.id);
+    await idb.deleteVisit(visitId);
+    return;
   }
+  await sqlite().runAsync('DELETE FROM visits WHERE id = ?', [visitId]);
 }
 
 export async function getAllVisits(): Promise<Visit[]> {
-  if (Platform.OS === 'web') {
-    return indexedDB.getAllVisits();
-  }
-
-  if (!db) throw new Error('Database not initialized');
-  const results = await db.getAllAsync('SELECT * FROM visits') as any[];
-  return results.map(r => ({
-    ...r,
-    synced: Boolean(r.synced),
-  })) as Visit[];
+  if (isWeb) return idb.getAllVisits();
+  const rows = await sqlite().getAllAsync('SELECT * FROM visits');
+  return rows.map(r => fromRow<Visit>(r));
 }
 
-// ===== CATEGORY QUERIES =====
+// ===== CATEGORIES =====
 
-export async function createCategory(name: string, type: 'place' | 'dish', parentId?: string, order?: number, userId?: string): Promise<Category> {
-  const id = generateId();
-  const now = Date.now();
-  const category: Category = { 
-    id, 
-    name, 
-    type, 
-    parentId, 
-    order, 
-    apiId: undefined,
-    synced: false,
-    userId,
-    createdAt: now 
-  };
-
-  if (Platform.OS === 'web') {
-    await indexedDB.putCategory(category);
-    return category;
+export async function createCategory(name: string, type: 'place' | 'dish', parentId?: string, order?: number): Promise<Category> {
+  const category: Category = { id: generateId(), name, type, parentId, order: order ?? 0, createdAt: Date.now() };
+  if (isWeb) {
+    await idb.putCategory(category);
+  } else {
+    await sqlInsert('categories', { ...category });
   }
-
-  if (!db) throw new Error('Database not initialized');
-  const orderIndex = order ?? 0;
-  await db.runAsync(
-    'INSERT INTO categories (id, name, type, parentId, orderIndex, apiId, synced, userId, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-    [id, name, type, parentId || null, orderIndex, null, 0, userId || null, now]
-  );
   return category;
 }
 
 export async function getCategory(categoryId: string): Promise<Category | null> {
-  if (Platform.OS === 'web') {
-    return indexedDB.getCategory(categoryId);
-  }
+  if (isWeb) return idb.getCategory(categoryId);
+  const row = await sqlite().getFirstAsync('SELECT * FROM categories WHERE id = ?', [categoryId]);
+  return row ? fromRow<Category>(row) : null;
+}
 
-  if (!db) throw new Error('Database not initialized');
-  const result = await db.getFirstAsync(
-    'SELECT * FROM categories WHERE id = ?',
-    [categoryId]
-  ) as any;
-  if (!result) return null;
-  return {
-    ...result,
-    order: result.orderIndex,
-    synced: Boolean(result.synced),
-  } as Category;
+function sortCategories(categories: Category[]): Category[] {
+  return categories.sort((a, b) => (a.order ?? 0) - (b.order ?? 0) || a.name.localeCompare(b.name));
 }
 
 export async function getCategoriesByType(type: 'place' | 'dish'): Promise<Category[]> {
-  if (Platform.OS === 'web') {
-    return indexedDB.getCategoriesByType(type);
-  }
+  if (isWeb) return sortCategories(await idb.getCategoriesByType(type));
+  const rows = await sqlite().getAllAsync('SELECT * FROM categories WHERE type = ?', [type]);
+  return sortCategories(rows.map(r => fromRow<Category>(r)));
+}
 
-  if (!db) throw new Error('Database not initialized');
-  const results = await db.getAllAsync(
-    'SELECT * FROM categories WHERE type = ? ORDER BY orderIndex ASC, name ASC',
-    [type]
-  ) as any[];
-  return results.map(r => ({
-    ...r,
-    order: r.orderIndex,
-    synced: Boolean(r.synced),
-  })) as Category[];
+export async function getAllCategories(): Promise<Category[]> {
+  if (isWeb) return sortCategories(await idb.getAllCategories());
+  const rows = await sqlite().getAllAsync('SELECT * FROM categories');
+  return sortCategories(rows.map(r => fromRow<Category>(r)));
+}
+
+export async function updateCategory(categoryId: string, updates: Partial<Pick<Category, 'name' | 'order' | 'parentId'>>): Promise<void> {
+  if (isWeb) {
+    const category = await idb.getCategory(categoryId);
+    if (!category) throw new Error('Category not found');
+    await idb.putCategory({ ...category, ...updates });
+    return;
+  }
+  await sqlUpdate('categories', categoryId, updates, false);
 }
 
 export async function updateCategoryOrder(categoryId: string, newOrder: number): Promise<void> {
-  if (Platform.OS === 'web') {
-    const category = await indexedDB.getCategory(categoryId);
-    if (!category) throw new Error('Category not found');
-    const updated = { ...category, order: newOrder, synced: false };
-    await indexedDB.putCategory(updated);
-    return;
-  }
-
-  if (!db) throw new Error('Database not initialized');
-  await db.runAsync('UPDATE categories SET orderIndex = ?, synced = ? WHERE id = ?', [newOrder, 0, categoryId]);
+  await updateCategory(categoryId, { order: newOrder });
 }
 
-// Mark category as synced (internal use for sync service)
-export async function markCategoryAsSynced(categoryId: string, apiId: string): Promise<void> {
-  if (Platform.OS === 'web') {
-    const category = await indexedDB.getCategory(categoryId);
-    if (category) {
-      category.apiId = apiId;
-      category.synced = true;
-      await indexedDB.putCategory(category);
-    }
-  } else {
-    if (!db) throw new Error('Database not initialized');
-    await db.runAsync(
-      'UPDATE categories SET apiId = ?, synced = ? WHERE id = ?',
-      [apiId, 1, categoryId]
-    );
-  }
-}
-
+/** Deletes a category and clears it from any place/dish/child category using it. */
 export async function deleteCategory(categoryId: string): Promise<void> {
-  if (Platform.OS === 'web') {
-    await indexedDB.deleteCategory(categoryId);
+  if (isWeb) {
+    for (const place of await idb.getAllPlaces()) {
+      if (place.categoryId === categoryId) await idb.putPlace({ ...place, categoryId: undefined });
+    }
+    for (const dish of await idb.getAllDishes()) {
+      if (dish.categoryId === categoryId) await idb.putDish({ ...dish, categoryId: undefined });
+    }
+    for (const cat of await idb.getAllCategories()) {
+      if (cat.parentId === categoryId) await idb.putCategory({ ...cat, parentId: undefined });
+    }
+    await idb.deleteCategory(categoryId);
     return;
   }
-
-  if (!db) throw new Error('Database not initialized');
-  await db.runAsync('DELETE FROM categories WHERE id = ?', [categoryId]);
+  const d = sqlite();
+  await d.runAsync('UPDATE places SET categoryId = NULL WHERE categoryId = ?', [categoryId]);
+  await d.runAsync('UPDATE dishes SET categoryId = NULL WHERE categoryId = ?', [categoryId]);
+  await d.runAsync('UPDATE categories SET parentId = NULL WHERE parentId = ?', [categoryId]);
+  await d.runAsync('DELETE FROM categories WHERE id = ?', [categoryId]);
 }
 
-async function getAllCategories(): Promise<Category[]> {
-  if (Platform.OS === 'web') {
-    return indexedDB.getAllCategories();
+// ===== TAGS =====
+
+export async function createTag(name: string, color?: string): Promise<Tag> {
+  const trimmed = name.trim();
+  if (!trimmed) throw new Error('Tag name is required');
+  const existing = await getAllTags();
+  if (existing.some(t => t.name.toLowerCase() === trimmed.toLowerCase())) {
+    throw new Error(`A tag named "${trimmed}" already exists`);
   }
-
-  if (!db) throw new Error('Database not initialized');
-  const results = (await db.getAllAsync(
-    'SELECT *, orderIndex as order FROM categories'
-  )) as any[];
-  return results.map((r: any) => ({ 
-    ...r, 
-    order: r.orderIndex,
-    synced: Boolean(r.synced),
-  })) as Category[];
-}
-
-// ===== TAG QUERIES =====
-
-export async function createTag(name: string, color?: string, userId?: string): Promise<Tag> {
-  const id = generateId();
-  const now = Date.now();
-  const tag: Tag = { 
-    id, 
-    name, 
-    color, 
-    apiId: undefined,
-    synced: false,
-    userId,
-    createdAt: now 
-  };
-
-  if (Platform.OS === 'web') {
-    const tags = await indexedDB.getAllTags();
-    // Check for duplicate name
-    if (tags.some(t => t.name.toLowerCase() === name.toLowerCase())) {
-      throw new Error('Tag with this name already exists');
-    }
-    await indexedDB.putTag(tag);
-    return tag;
+  const tag: Tag = { id: generateId(), name: trimmed, color, createdAt: Date.now() };
+  if (isWeb) {
+    await idb.putTag(tag);
+  } else {
+    await sqlInsert('tags', { ...tag });
   }
-
-  if (!db) throw new Error('Database not initialized');
-  await db.runAsync(
-    'INSERT INTO tags (id, name, color, apiId, synced, userId, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?)',
-    [id, name, color || null, null, 0, userId || null, now]
-  );
   return tag;
 }
 
 export async function getAllTags(): Promise<Tag[]> {
-  if (Platform.OS === 'web') {
-    const storage = getLocalStorage();
-    const stored = storage ? storage.getItem('chowder_tags') : null;
-    return stored ? JSON.parse(stored) : [];
-  }
-
-  if (!db) throw new Error('Database not initialized');
-  return (await db.getAllAsync('SELECT * FROM tags ORDER BY name ASC')) as Tag[];
+  if (isWeb) return (await idb.getAllTags()).sort((a, b) => a.name.localeCompare(b.name));
+  const rows = await sqlite().getAllAsync('SELECT * FROM tags ORDER BY name ASC');
+  return rows.map(r => fromRow<Tag>(r));
 }
 
 export async function getTagsForPlace(placeId: string): Promise<Tag[]> {
-  if (Platform.OS === 'web') {
-    const tags = await indexedDB.getAllTags();
-    const placeTags = await getPlaceTags(placeId);
-    return tags.filter(t => placeTags.includes(t.id));
-  }
-
-  if (!db) throw new Error('Database not initialized');
-  const results = await db.getAllAsync(
-    `SELECT t.* FROM tags t
-     INNER JOIN place_tags pt ON t.id = pt.tagId
-     WHERE pt.placeId = ?
-     ORDER BY t.name ASC`,
-    [placeId]
-  ) as any[];
-  return results.map(r => ({
-    ...r,
-    synced: Boolean(r.synced),
-  })) as Tag[];
+  const [tags, tagIds] = await Promise.all([getAllTags(), getPlaceTagIds(placeId)]);
+  const ids = new Set(tagIds);
+  return tags.filter(t => ids.has(t.id));
 }
 
 export async function addTagToPlace(placeId: string, tagId: string): Promise<void> {
-  if (Platform.OS === 'web') {
-    const placeTags = await getPlaceTags(placeId);
-    if (!placeTags.includes(tagId)) {
-      placeTags.push(tagId);
-      const storage = getLocalStorage();
-      if (storage) storage.setItem(`chowder_place_tags_${placeId}`, JSON.stringify(placeTags));
-    }
+  if (isWeb) {
+    await idb.addTagToPlace(placeId, tagId);
     return;
   }
-
-  if (!db) throw new Error('Database not initialized');
-  await db.runAsync('INSERT OR IGNORE INTO place_tags (placeId, tagId) VALUES (?, ?)', [placeId, tagId]);
+  await sqlite().runAsync('INSERT OR IGNORE INTO place_tags (placeId, tagId) VALUES (?, ?)', [placeId, tagId]);
 }
 
 export async function removeTagFromPlace(placeId: string, tagId: string): Promise<void> {
-  if (Platform.OS === 'web') {
-    await indexedDB.removeTagFromPlace(placeId, tagId);
-    // Mark place as unsynced
-    const place = await indexedDB.getPlace(placeId);
-    if (place) {
-      place.synced = false;
-      await indexedDB.putPlace(place);
-    }
+  if (isWeb) {
+    await idb.removeTagFromPlace(placeId, tagId);
     return;
   }
-
-  if (!db) throw new Error('Database not initialized');
-  await db.runAsync('DELETE FROM place_tags WHERE placeId = ? AND tagId = ?', [placeId, tagId]);
-  // Mark place as unsynced
-  await db.runAsync('UPDATE places SET synced = ? WHERE id = ?', [0, placeId]);
-}
-
-// Mark tag as synced (internal use for sync service)
-export async function markTagAsSynced(tagId: string, apiId: string): Promise<void> {
-  if (Platform.OS === 'web') {
-    const tag = await indexedDB.getTag(tagId);
-    if (tag) {
-      tag.apiId = apiId;
-      tag.synced = true;
-      await indexedDB.putTag(tag);
-    }
-  } else {
-    if (!db) throw new Error('Database not initialized');
-    await db.runAsync(
-      'UPDATE tags SET apiId = ?, synced = ? WHERE id = ?',
-      [apiId, 1, tagId]
-    );
-  }
+  await sqlite().runAsync('DELETE FROM place_tags WHERE placeId = ? AND tagId = ?', [placeId, tagId]);
 }
 
 export async function deleteTag(tagId: string): Promise<void> {
-  if (Platform.OS === 'web') {
-    const tags = await getAllTags();
-    const filtered = tags.filter(t => t.id !== tagId);
-    const storage = getLocalStorage();
-    if (storage) storage.setItem('chowder_tags', JSON.stringify(filtered));
-    // Also remove from all places
-    const allPlaces = await getAllPlaces();
-    for (const place of allPlaces) {
-      if (place.tagIds) {
-        const filteredTagIds = place.tagIds.filter((id: string) => id !== tagId);
-        // Update place in storage
-        const places = await getAllPlaces();
-        const placeIndex = places.findIndex(p => p.id === place.id);
-        if (placeIndex !== -1) {
-          places[placeIndex].tagIds = filteredTagIds;
-          const storage2 = getLocalStorage();
-          if (storage2) storage2.setItem('chowder_places', JSON.stringify(places));
-        }
-      }
+  if (isWeb) {
+    for (const pt of (await idb.getAllPlaceTags()).filter(pt => pt.tagId === tagId)) {
+      await idb.removeTagFromPlace(pt.placeId, pt.tagId);
     }
+    await idb.deleteTag(tagId);
     return;
   }
-
-  if (!db) throw new Error('Database not initialized');
-  await db.runAsync('DELETE FROM tags WHERE id = ?', [tagId]);
-  // CASCADE will handle place_tags
+  await sqlite().runAsync('DELETE FROM tags WHERE id = ?', [tagId]); // cascades place_tags
 }
 
-async function getPlaceTags(placeId: string): Promise<string[]> {
-  if (Platform.OS === 'web') {
-    return indexedDB.getPlaceTags(placeId);
-  }
-  if (!db) throw new Error('Database not initialized');
-  const results = (await db.getAllAsync('SELECT tagId FROM place_tags WHERE placeId = ?', [placeId])) as { tagId: string }[];
-  return results.map((r: { tagId: string }) => r.tagId);
+async function getPlaceTagIds(placeId: string): Promise<string[]> {
+  if (isWeb) return idb.getPlaceTags(placeId);
+  const rows = await sqlite().getAllAsync<{ tagId: string }>('SELECT tagId FROM place_tags WHERE placeId = ?', [placeId]);
+  return rows.map(r => r.tagId);
 }
 
 async function getAllPlaceTags(): Promise<PlaceTag[]> {
-  if (Platform.OS === 'web') {
-    return indexedDB.getAllPlaceTags();
-  }
-  if (!db) throw new Error('Database not initialized');
-  return (await db.getAllAsync('SELECT placeId, tagId FROM place_tags')) as PlaceTag[];
+  if (isWeb) return idb.getAllPlaceTags();
+  return sqlite().getAllAsync<PlaceTag>('SELECT placeId, tagId FROM place_tags');
 }
 
-// ===== DISH QUERIES =====
+// ===== DISHES =====
 
 export async function createDish(visitId: string, name: string, rating: number, categoryId?: string, notes?: string, photoUri?: string): Promise<Dish> {
-  const id = generateId();
   const now = Date.now();
-  const dish: Dish = { 
-    id, 
-    visitId, 
-    name, 
-    categoryId, 
-    rating, 
-    notes, 
-    photoUri, 
-    apiId: undefined,
-    synced: false,
-    createdAt: now, 
-    updatedAt: now 
-  };
-
-  if (Platform.OS === 'web') {
-    await indexedDB.putDish(dish);
-    return dish;
+  const dish: Dish = { id: generateId(), visitId, name, categoryId, rating, notes, photoUri, createdAt: now, updatedAt: now };
+  if (isWeb) {
+    await idb.putDish(dish);
+  } else {
+    await sqlInsert('dishes', { ...dish });
   }
-
-  if (!db) throw new Error('Database not initialized');
-  await db.runAsync(
-    'INSERT INTO dishes (id, visitId, name, categoryId, rating, notes, photoUri, apiId, synced, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-    [id, visitId, name, categoryId || null, rating, notes || null, photoUri || null, null, 0, now, now]
-  );
   return dish;
 }
 
-export async function getDishesForVisit(visitId: string): Promise<Dish[]> {
-  if (Platform.OS === 'web') {
-    return indexedDB.getDishesForVisit(visitId);
-  }
-
-  if (!db) throw new Error('Database not initialized');
-  const results = await db.getAllAsync(
-    'SELECT * FROM dishes WHERE visitId = ? ORDER BY createdAt DESC',
-    [visitId]
-  ) as any[];
-  return results.map(r => ({
-    ...r,
-    synced: Boolean(r.synced),
-  })) as Dish[];
-}
-
 export async function getDishesForPlace(placeId: string): Promise<Dish[]> {
-  if (Platform.OS === 'web') {
-    const visits = await indexedDB.getVisitsForPlace(placeId);
-    const visitIds = visits.map(v => v.id);
-    const allDishes = await indexedDB.getAllDishes();
-    return allDishes.filter(d => visitIds.includes(d.visitId)).sort((a, b) => b.createdAt - a.createdAt);
-  }
-
-  if (!db) throw new Error('Database not initialized');
-  const results = await db.getAllAsync(
-    `SELECT d.* FROM dishes d 
-     INNER JOIN visits v ON d.visitId = v.id 
-     WHERE v.placeId = ? 
-     ORDER BY d.createdAt DESC`,
-    [placeId]
-  ) as any[];
-  return results.map(r => ({
-    ...r,
-    synced: Boolean(r.synced),
-  })) as Dish[];
+  const visits = await getVisitsForPlace(placeId);
+  const visitIds = new Set(visits.map(v => v.id));
+  const dishes = await getAllDishes();
+  return dishes.filter(d => visitIds.has(d.visitId)).sort((a, b) => b.createdAt - a.createdAt);
 }
 
 export async function updateDish(dishId: string, updates: Partial<Pick<Dish, 'name' | 'categoryId' | 'rating' | 'notes' | 'photoUri'>>): Promise<void> {
-  if (Platform.OS === 'web') {
-    const dish = await indexedDB.getDish(dishId);
+  if (isWeb) {
+    const dish = await idb.getDish(dishId);
     if (!dish) throw new Error('Dish not found');
-    const updated = { ...dish, ...updates, synced: false, updatedAt: Date.now() };
-    await indexedDB.putDish(updated);
+    await idb.putDish({ ...dish, ...updates, updatedAt: Date.now() });
     return;
   }
-
-  if (!db) throw new Error('Database not initialized');
-  const fields = Object.keys(updates).map(k => `${k} = ?`).join(', ');
-  const values = [...Object.values(updates), 0, Date.now(), dishId]; // Set synced to false
-  await db.runAsync(`UPDATE dishes SET ${fields}, synced = ?, updatedAt = ? WHERE id = ?`, values);
-}
-
-// Mark dish as synced (internal use for sync service)
-export async function markDishAsSynced(dishId: string, apiId: string, lastSyncedAt: number): Promise<void> {
-  if (Platform.OS === 'web') {
-    const dish = await indexedDB.getDish(dishId);
-    if (dish) {
-      dish.apiId = apiId;
-      dish.synced = true;
-      dish.lastSyncedAt = lastSyncedAt;
-      await indexedDB.putDish(dish);
-    }
-  } else {
-    if (!db) throw new Error('Database not initialized');
-    await db.runAsync(
-      'UPDATE dishes SET apiId = ?, synced = ?, lastSyncedAt = ? WHERE id = ?',
-      [apiId, 1, lastSyncedAt, dishId]
-    );
-  }
+  await sqlUpdate('dishes', dishId, updates, true);
 }
 
 export async function deleteDish(dishId: string): Promise<void> {
-  if (Platform.OS === 'web') {
-    await indexedDB.deleteDish(dishId);
+  if (isWeb) {
+    await idb.deleteDish(dishId);
     return;
   }
-
-  if (!db) throw new Error('Database not initialized');
-  await db.runAsync('DELETE FROM dishes WHERE id = ?', [dishId]);
+  await sqlite().runAsync('DELETE FROM dishes WHERE id = ?', [dishId]);
 }
 
 export async function getAllDishes(): Promise<Dish[]> {
-  if (Platform.OS === 'web') {
-    return indexedDB.getAllDishes();
-  }
-
-  if (!db) throw new Error('Database not initialized');
-  const results = await db.getAllAsync('SELECT * FROM dishes') as any[];
-  return results.map(r => ({
-    ...r,
-    synced: Boolean(r.synced),
-  })) as Dish[];
+  if (isWeb) return idb.getAllDishes();
+  const rows = await sqlite().getAllAsync('SELECT * FROM dishes');
+  return rows.map(r => fromRow<Dish>(r));
 }
 
 // ===== BACKUP & RESTORE =====
@@ -1277,23 +882,23 @@ export interface BackupData {
   placeTags: PlaceTag[];
 }
 
-// Export all data as JSON backup
 export async function exportBackup(): Promise<BackupData> {
-  const author = await getAuthor();
-  const places = await getAllPlaces();
-  const lists = await getAllLists();
-  const listItems = await getAllListItems();
-  const visits = await getAllVisits();
-  const dishes = await getAllDishes();
-  const categories = await getAllCategories();
-  const tags = await getAllTags();
-  const placeTags = await getAllPlaceTags();
-
+  const [author, places, lists, listItems, visits, dishes, categories, tags, placeTags] = await Promise.all([
+    getAuthor(),
+    getRawPlaces(),
+    getRawLists(),
+    getAllListItems(),
+    getAllVisits(),
+    getAllDishes(),
+    getAllCategories(),
+    getAllTags(),
+    getAllPlaceTags(),
+  ]);
   return {
-    version: '1.0',
+    version: '2.0',
     exportedAt: Date.now(),
     author,
-    places,
+    places: places.map(storablePlace),
     lists,
     listItems,
     visits,
@@ -1304,236 +909,76 @@ export async function exportBackup(): Promise<BackupData> {
   };
 }
 
-// Import data from backup
+/** Pick only known columns so stray/legacy fields in a backup don't break inserts. */
+function pick<T extends object>(obj: T, keys: string[]): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const key of keys) out[key] = (obj as any)[key];
+  return out;
+}
+
+const COLUMNS = {
+  author: ['id', 'displayName', 'avatarUri', 'email', 'createdAt'],
+  places: ['id', 'name', 'address', 'latitude', 'longitude', 'categoryId', 'notes', 'overallRatingManual', 'ratingMode', 'coverImageUri', 'createdAt', 'updatedAt'],
+  lists: ['id', 'name', 'description', 'category', 'city', 'importedFrom', 'importedAt', 'createdAt', 'updatedAt'],
+  list_items: ['id', 'listId', 'placeId', 'order', 'createdAt'],
+  visits: ['id', 'placeId', 'notes', 'photoUri', 'createdAt', 'updatedAt'],
+  dishes: ['id', 'visitId', 'name', 'categoryId', 'rating', 'notes', 'photoUri', 'createdAt', 'updatedAt'],
+  categories: ['id', 'name', 'type', 'parentId', 'order', 'createdAt'],
+  tags: ['id', 'name', 'color', 'createdAt'],
+};
+
+export function validateBackup(data: any): asserts data is BackupData {
+  if (!data || typeof data !== 'object') throw new Error('Backup file is not valid JSON data');
+  for (const key of ['places', 'lists', 'listItems', 'visits', 'dishes', 'categories', 'tags']) {
+    if (!Array.isArray(data[key])) throw new Error(`Backup is missing "${key}"`);
+  }
+}
+
+/** Replaces all local data with the backup's contents. */
 export async function importBackup(backup: BackupData): Promise<void> {
-  if (Platform.OS === 'web') {
-    // Clear existing data
-    const allPlaceTags = await indexedDB.getAllPlaceTags();
-    const allPlaces = await indexedDB.getAllPlaces();
-    const allLists = await indexedDB.getAllLists();
-    const allListItems = await indexedDB.getAllListItems();
-    const allVisits = await indexedDB.getAllVisits();
-    const allDishes = await indexedDB.getAllDishes();
-    const allCategories = await indexedDB.getAllCategories();
-    const allTags = await indexedDB.getAllTags();
+  validateBackup(backup);
+  const placeTags = backup.placeTags ?? [];
 
-    // Delete join tables first
-    for (const placeTag of allPlaceTags) {
-      await indexedDB.removeTagFromPlace(placeTag.placeId, placeTag.tagId);
-    }
-    for (const dish of allDishes) {
-      await indexedDB.deleteDish(dish.id);
-    }
-    for (const visit of allVisits) {
-      await indexedDB.deleteVisit(visit.id);
-    }
-    for (const item of allListItems) {
-      await indexedDB.deleteListItem(item.id);
-    }
-    // Delete entities
-    for (const place of allPlaces) {
-      await indexedDB.deletePlace(place.id);
-    }
-    for (const list of allLists) {
-      await indexedDB.deleteList(list.id);
-    }
-    for (const category of allCategories) {
-      await indexedDB.deleteCategory(category.id);
-    }
-    for (const tag of allTags) {
-      await indexedDB.deleteTag(tag.id);
-    }
+  if (isWeb) {
+    // Clear everything
+    for (const pt of await idb.getAllPlaceTags()) await idb.removeTagFromPlace(pt.placeId, pt.tagId);
+    for (const d of await idb.getAllDishes()) await idb.deleteDish(d.id);
+    for (const v of await idb.getAllVisits()) await idb.deleteVisit(v.id);
+    for (const li of await idb.getAllListItems()) await idb.deleteListItem(li.id);
+    for (const p of await idb.getAllPlaces()) await idb.deletePlace(p.id);
+    for (const l of await idb.getAllLists()) await idb.deleteList(l.id);
+    for (const c of await idb.getAllCategories()) await idb.deleteCategory(c.id);
+    for (const t of await idb.getAllTags()) await idb.deleteTag(t.id);
+    await idb.clearAuthors();
 
-    // Import new data
-    if (backup.author) {
-      await indexedDB.putAuthor(backup.author);
-    }
-    for (const place of backup.places) {
-      await indexedDB.putPlace(place);
-    }
-    for (const list of backup.lists) {
-      await indexedDB.putList(list);
-    }
-    for (const item of backup.listItems) {
-      await indexedDB.putListItem(item);
-    }
-    for (const visit of backup.visits) {
-      await indexedDB.putVisit(visit);
-    }
-    for (const dish of backup.dishes) {
-      await indexedDB.putDish(dish);
-    }
-    for (const category of backup.categories) {
-      await indexedDB.putCategory(category);
-    }
-    for (const tag of backup.tags) {
-      await indexedDB.putTag(tag);
-    }
-    // Restore place-tag relationships
-    if (backup.placeTags) {
-      for (const placeTag of backup.placeTags) {
-        await indexedDB.addTagToPlace(placeTag.placeId, placeTag.tagId);
-      }
-    }
+    if (backup.author) await idb.putAuthor(backup.author);
+    for (const p of backup.places) await idb.putPlace(storablePlace(p));
+    for (const l of backup.lists) await idb.putList(l);
+    for (const li of backup.listItems) await idb.putListItem(li);
+    for (const v of backup.visits) await idb.putVisit(v);
+    for (const d of backup.dishes) await idb.putDish(d);
+    for (const c of backup.categories) await idb.putCategory(c);
+    for (const t of backup.tags) await idb.putTag(t);
+    for (const pt of placeTags) await idb.addTagToPlace(pt.placeId, pt.tagId);
     return;
   }
 
-  if (!db) throw new Error('Database not initialized');
-
-  // Clear existing data
-  await db.execAsync('DELETE FROM place_tags');
-  await db.execAsync('DELETE FROM dishes');
-  await db.execAsync('DELETE FROM visits');
-  await db.execAsync('DELETE FROM list_items');
-  await db.execAsync('DELETE FROM lists');
-  await db.execAsync('DELETE FROM places');
-  await db.execAsync('DELETE FROM categories');
-  await db.execAsync('DELETE FROM tags');
-  await db.execAsync('DELETE FROM author');
-
-  // Import new data
-  if (backup.author) {
-    await db.runAsync(
-      'INSERT INTO author (id, displayName, avatarUri, email, apiId, synced, userId, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-      [
-        backup.author.id,
-        backup.author.displayName,
-        backup.author.avatarUri || null,
-        backup.author.email || null,
-        backup.author.apiId || null,
-        backup.author.synced ? 1 : 0,
-        backup.author.userId || null,
-        backup.author.createdAt,
-      ]
-    );
-  }
-
-  for (const place of backup.places) {
-    await db.runAsync(
-      'INSERT INTO places (id, name, address, latitude, longitude, categoryId, notes, overallRatingManual, ratingMode, coverImageUri, apiId, synced, lastSyncedAt, userId, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-      [
-        place.id,
-        place.name,
-        place.address || null,
-        place.latitude,
-        place.longitude,
-        place.categoryId || null,
-        place.notes || null,
-        place.overallRatingManual || null,
-        place.ratingMode || null,
-        place.coverImageUri || null,
-        place.apiId || null,
-        place.synced ? 1 : 0,
-        place.lastSyncedAt || null,
-        place.userId || null,
-        place.createdAt,
-        place.updatedAt,
-      ]
-    );
-  }
-
-  for (const list of backup.lists) {
-    await db.runAsync(
-      'INSERT INTO lists (id, name, description, category, city, apiId, synced, lastSyncedAt, userId, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-      [
-        list.id,
-        list.name,
-        list.description || null,
-        list.category || null,
-        list.city || null,
-        list.apiId || null,
-        list.synced ? 1 : 0,
-        list.lastSyncedAt || null,
-        list.userId || null,
-        list.createdAt,
-        list.updatedAt,
-      ]
-    );
-  }
-
-  for (const item of backup.listItems) {
-    await db.runAsync(
-      'INSERT INTO list_items (id, listId, placeId, [order], createdAt) VALUES (?, ?, ?, ?, ?)',
-      [item.id, item.listId, item.placeId, item.order, item.createdAt]
-    );
-  }
-
-  for (const visit of backup.visits) {
-    await db.runAsync(
-      'INSERT INTO visits (id, placeId, notes, photoUri, apiId, synced, lastSyncedAt, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-      [
-        visit.id,
-        visit.placeId,
-        visit.notes || null,
-        visit.photoUri || null,
-        visit.apiId || null,
-        visit.synced ? 1 : 0,
-        visit.lastSyncedAt || null,
-        visit.createdAt,
-        visit.updatedAt,
-      ]
-    );
-  }
-
-  for (const dish of backup.dishes) {
-    await db.runAsync(
-      'INSERT INTO dishes (id, visitId, name, categoryId, rating, notes, photoUri, apiId, synced, lastSyncedAt, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-      [
-        dish.id,
-        dish.visitId,
-        dish.name,
-        dish.categoryId || null,
-        dish.rating,
-        dish.notes || null,
-        dish.photoUri || null,
-        dish.apiId || null,
-        dish.synced ? 1 : 0,
-        dish.lastSyncedAt || null,
-        dish.createdAt,
-        dish.updatedAt,
-      ]
-    );
-  }
-
-  for (const category of backup.categories) {
-    await db.runAsync(
-      'INSERT INTO categories (id, name, type, parentId, orderIndex, apiId, synced, userId, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-      [
-        category.id,
-        category.name,
-        category.type,
-        category.parentId || null,
-        category.order ?? 0,
-        category.apiId || null,
-        category.synced ? 1 : 0,
-        category.userId || null,
-        category.createdAt,
-      ]
-    );
-  }
-
-  for (const tag of backup.tags) {
-    await db.runAsync(
-      'INSERT INTO tags (id, name, color, apiId, synced, userId, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?)',
-      [
-        tag.id,
-        tag.name,
-        tag.color || null,
-        tag.apiId || null,
-        tag.synced ? 1 : 0,
-        tag.userId || null,
-        tag.createdAt,
-      ]
-    );
-  }
-
-  // Restore place-tag relationships
-  if (backup.placeTags) {
-    for (const placeTag of backup.placeTags) {
-      await db.runAsync(
-        'INSERT INTO place_tags (placeId, tagId) VALUES (?, ?)',
-        [placeTag.placeId, placeTag.tagId]
-      );
+  const d = sqlite();
+  await d.withTransactionAsync(async () => {
+    await d.execAsync(`
+      DELETE FROM place_tags; DELETE FROM dishes; DELETE FROM visits; DELETE FROM list_items;
+      DELETE FROM lists; DELETE FROM places; DELETE FROM categories; DELETE FROM tags; DELETE FROM author;
+    `);
+    if (backup.author) await sqlInsert('author', pick(backup.author, COLUMNS.author));
+    for (const p of backup.places) await sqlInsert('places', pick(p, COLUMNS.places));
+    for (const l of backup.lists) await sqlInsert('lists', pick(l, COLUMNS.lists));
+    for (const c of backup.categories) await sqlInsert('categories', pick(c, COLUMNS.categories));
+    for (const t of backup.tags) await sqlInsert('tags', pick(t, COLUMNS.tags));
+    for (const li of backup.listItems) await sqlInsert('list_items', pick(li, COLUMNS.list_items));
+    for (const v of backup.visits) await sqlInsert('visits', pick(v, COLUMNS.visits));
+    for (const dish of backup.dishes) await sqlInsert('dishes', pick(dish, COLUMNS.dishes));
+    for (const pt of placeTags) {
+      await d.runAsync('INSERT OR IGNORE INTO place_tags (placeId, tagId) VALUES (?, ?)', [pt.placeId, pt.tagId]);
     }
-  }
+  });
 }

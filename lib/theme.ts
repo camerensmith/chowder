@@ -8,6 +8,7 @@ export const theme = {
     primary: '#DC143C', // Red
     secondary: '#FFD700', // Yellow
     onSecondary: '#9C321B', // Icon color for yellow buttons
+    onPrimary: '#FFFFFF',
     background: '#F8F3F5',
     surface: '#F9F9F9',
     text: '#1A1A1A',
@@ -39,6 +40,8 @@ export const theme = {
     body: { fontSize: 16, fontWeight: '400' as const },
     bodySmall: { fontSize: 14, fontWeight: '400' as const },
     caption: { fontSize: 12, fontWeight: '400' as const },
+    labelMedium: { fontSize: 14, fontWeight: '600' as const },
+    labelLarge: { fontSize: 16, fontWeight: '600' as const },
   },
   shadow: Platform.select({
     web: {

@@ -74,11 +74,8 @@ export default function PlaceInfoCard({ place, categoryName, imageUri, onPress, 
     );
   };
 
-  // Get the rating to display (prefer overallRatingManual if set, otherwise overallRating)
-  // overallRatingManual takes precedence because it's explicitly set by the user
-  const displayRating = place.overallRatingManual !== undefined 
-    ? place.overallRatingManual 
-    : (place.overallRating !== undefined && place.overallRating > 0 ? place.overallRating : undefined);
+  // Computed in lib/db.ts (respects the place's rating mode).
+  const displayRating = place.overallRating && place.overallRating > 0 ? place.overallRating : undefined;
 
   // Get full address for subtitle
   const getSubtitle = () => {
@@ -123,9 +120,9 @@ export default function PlaceInfoCard({ place, categoryName, imageUri, onPress, 
             <Text style={styles.title} numberOfLines={1}>{place.name}</Text>
             
             {/* Subtitle (city/location) */}
-            {getSubtitle() && (
+            {getSubtitle() ? (
               <Text style={styles.subtitle} numberOfLines={1}>{getSubtitle()}</Text>
-            )}
+            ) : null}
             
             {/* Metadata row (category + rating) */}
             <View style={styles.metadataRow}>

@@ -6,7 +6,7 @@ export interface Author {
   avatarUri?: string;
   email?: string;
   apiId?: string;
-  synced: boolean;
+  synced?: boolean;
   userId?: string;
   createdAt: number;
 }
@@ -26,7 +26,7 @@ export interface Place {
   cloudflareImageId?: string; // Cloudflare Images ID for CDN fallback
   tagIds?: string[]; // Array of tag IDs (not stored in DB, loaded separately)
   apiId?: string;
-  synced: boolean;
+  synced?: boolean;
   lastSyncedAt?: number;
   userId?: string;
   createdAt: number;
@@ -40,10 +40,11 @@ export interface List {
   category?: string; // e.g., "Pho", "Pizza"
   city?: string; // e.g., "NYC", "Bay Area"
   overallRating?: number; // Calculated from places
+  placeCount?: number; // Derived in lib/db.ts
   importedFrom?: string; // Friend's display name if this list was imported
   importedAt?: number; // Timestamp when imported
   apiId?: string;
-  synced: boolean;
+  synced?: boolean;
   lastSyncedAt?: number;
   userId?: string;
   createdAt: number;
@@ -64,7 +65,7 @@ export interface Visit {
   notes?: string;
   photoUri?: string;
   apiId?: string;
-  synced: boolean;
+  synced?: boolean;
   lastSyncedAt?: number;
   createdAt: number;
   updatedAt: number;
@@ -79,7 +80,7 @@ export interface Dish {
   notes?: string;
   photoUri?: string;
   apiId?: string;
-  synced: boolean;
+  synced?: boolean;
   lastSyncedAt?: number;
   createdAt: number;
   updatedAt: number;
@@ -92,7 +93,7 @@ export interface Category {
   parentId?: string;
   order?: number; // For custom ordering
   apiId?: string;
-  synced: boolean;
+  synced?: boolean;
   userId?: string;
   createdAt: number;
 }
@@ -102,7 +103,7 @@ export interface Tag {
   name: string;
   color?: string; // Optional color for tag chips
   apiId?: string;
-  synced: boolean;
+  synced?: boolean;
   userId?: string;
   createdAt: number;
 }
@@ -141,10 +142,9 @@ export interface SharePlace {
 export type RootStackParamList = {
   Main: undefined;
   CreateAccount: undefined;
-  Login: undefined;
   ListDetail: { listId: string };
   PlaceDetail: { placeId: string };
-  ShareViewer: { code?: string; friendName?: string };
+  ShareViewer: { code?: string; friendName?: string; listId?: string };
   CategoryManagement: undefined;
   TileProvider: undefined;
 };

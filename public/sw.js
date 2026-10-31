@@ -1,82 +1,75 @@
-// Service Worker for Chowder PWA
-// Provides offline caching and asset management
+// Service worker for the Chowder PWA.
+//
+// - Page navigations / index.html: network-first, so a new deploy is picked up
+//   on the next launch; falls back to the cached shell when offline.
+// - Hashed build files (/_expo/, /assets/): cache-first (their URLs change
+//   whenever their content does).
+// - Everything else (map tiles, geocoding, other origins): not intercepted.
+//
+// BUILD_ID is replaced at deploy time by fix-paths.js so every deploy gets a
+// fresh cache and old ones are deleted.
 
-const CACHE_NAME = 'chowder-v1';
-const BASE_PATH = '/';
+const BUILD_ID = '__BUILD_ID__';
+const CACHE_NAME = `chowder-${BUILD_ID}`;
+const SCOPE = self.registration ? self.registration.scope : self.location.href.replace(/sw\.js$/, '');
+const SHELL_URL = new URL('./', SCOPE).href;
 
-// Assets to cache on install
-const STATIC_ASSETS = [
-  `${BASE_PATH}`,
-  `${BASE_PATH}index.html`,
-];
-
-// Install event - cache static assets
 self.addEventListener('install', (event) => {
-  console.log('[Service Worker] Installing...');
   event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => {
-      console.log('[Service Worker] Caching static assets');
-      return cache.addAll(STATIC_ASSETS).catch((err) => {
-        console.warn('[Service Worker] Failed to cache some assets:', err);
-      });
-    })
+    caches.open(CACHE_NAME)
+      .then((cache) => cache.add(SHELL_URL))
+      .catch(() => undefined)
+      .then(() => self.skipWaiting())
   );
-  // Force the waiting service worker to become the active service worker
-  self.skipWaiting();
 });
 
-// Activate event - clean up old caches
 self.addEventListener('activate', (event) => {
-  console.log('[Service Worker] Activating...');
   event.waitUntil(
-    caches.keys().then((cacheNames) => {
-      return Promise.all(
-        cacheNames.map((cacheName) => {
-          if (cacheName !== CACHE_NAME) {
-            console.log('[Service Worker] Deleting old cache:', cacheName);
-            return caches.delete(cacheName);
-          }
-        })
-      );
-    })
+    caches.keys()
+      .then((names) => Promise.all(
+        names.filter((name) => name.startsWith('chowder-') && name !== CACHE_NAME).map((name) => caches.delete(name))
+      ))
+      .then(() => self.clients.claim())
   );
-  // Take control of all pages immediately
-  return self.clients.claim();
 });
 
-// Fetch event - serve from cache, fallback to network
+function isBuildAsset(url) {
+  return url.pathname.includes('/_expo/') || url.pathname.includes('/assets/');
+}
+
 self.addEventListener('fetch', (event) => {
-  // Only handle same-origin requests
-  if (!event.request.url.startsWith(self.location.origin)) {
+  const request = event.request;
+  if (request.method !== 'GET') return;
+  const url = new URL(request.url);
+  if (url.origin !== self.location.origin || !request.url.startsWith(SCOPE)) return;
+
+  if (request.mode === 'navigate' || url.pathname.endsWith('/index.html')) {
+    event.respondWith(
+      fetch(request)
+        .then((response) => {
+          if (response.ok) {
+            const copy = response.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put(SHELL_URL, copy));
+          }
+          return response;
+        })
+        .catch(() => caches.match(SHELL_URL).then((cached) => cached || Response.error()))
+    );
     return;
   }
 
-  event.respondWith(
-    caches.match(event.request).then((cachedResponse) => {
-      if (cachedResponse) {
-        return cachedResponse;
-      }
-
-      return fetch(event.request).then((response) => {
-        // Don't cache non-successful responses
-        if (!response || response.status !== 200 || response.type !== 'basic') {
+  if (isBuildAsset(url)) {
+    event.respondWith(
+      caches.match(request).then((cached) => {
+        if (cached) return cached;
+        return fetch(request).then((response) => {
+          if (response.ok && response.type === 'basic') {
+            const copy = response.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put(request, copy));
+          }
           return response;
-        }
-
-        // Clone the response for caching
-        const responseToCache = response.clone();
-
-        caches.open(CACHE_NAME).then((cache) => {
-          cache.put(event.request, responseToCache);
         });
-
-        return response;
-      }).catch(() => {
-        // If both cache and network fail, return offline page if available
-        if (event.request.destination === 'document') {
-          return caches.match(`${BASE_PATH}index.html`);
-        }
-      });
-    })
-  );
+      })
+    );
+  }
 });

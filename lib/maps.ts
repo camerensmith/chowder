@@ -1,4 +1,9 @@
 // Map utilities - Nominatim search for places
+import { Platform } from 'react-native';
+
+// Browsers identify the app via Referer; a custom User-Agent there only adds a
+// CORS preflight to every request. Native apps must identify themselves.
+const NOMINATIM_HEADERS: Record<string, string> = Platform.OS === 'web' ? {} : { 'User-Agent': 'Chowder/1.0' };
 
 export interface NominatimResult {
   place_id: number;
@@ -65,7 +70,7 @@ export async function searchPlaces(
 
     const response = await fetch(url.toString(), {
       headers: {
-        'User-Agent': 'Chowder/1.0',
+        ...NOMINATIM_HEADERS,
       },
     });
 
@@ -114,7 +119,7 @@ export async function reverseGeocode(latitude: number, longitude: number): Promi
 
     const response = await fetch(url.toString(), {
       headers: {
-        'User-Agent': 'Chowder/1.0',
+        ...NOMINATIM_HEADERS,
       },
     });
 
@@ -160,7 +165,7 @@ export async function reverseGeocodeDetailed(latitude: number, longitude: number
 
     const response = await fetch(url.toString(), {
       headers: {
-        'User-Agent': 'Chowder/1.0',
+        ...NOMINATIM_HEADERS,
       },
     });
 

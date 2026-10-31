@@ -9,6 +9,7 @@ import {
   ScrollView,
   Alert,
   Platform,
+  KeyboardAvoidingView,
 } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Visit } from '../types';
@@ -38,7 +39,7 @@ export default function VisitEditModal({ visible, visit, onClose, onSave }: Visi
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <View style={styles.overlay}>
+      <KeyboardAvoidingView style={styles.overlay} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <View style={styles.modal}>
           <View style={styles.header}>
             <Text style={styles.title}>Edit Visit</Text>
@@ -47,7 +48,7 @@ export default function VisitEditModal({ visible, visit, onClose, onSave }: Visi
             </TouchableOpacity>
           </View>
 
-          <ScrollView style={styles.content}>
+          <ScrollView keyboardShouldPersistTaps="handled" style={styles.content}>
             {/* Notes */}
             <View style={styles.field}>
               <Text style={styles.label}>Notes</Text>
@@ -87,7 +88,7 @@ export default function VisitEditModal({ visible, visit, onClose, onSave }: Visi
             </TouchableOpacity>
           </View>
         </View>
-      </View>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }

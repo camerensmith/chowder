@@ -7,96 +7,73 @@ import {
   StyleSheet,
   Image,
   Alert,
+  KeyboardAvoidingView,
+  Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import * as ImagePicker from 'expo-image-picker';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../types';
 import { theme } from '../lib/theme';
-import { signUp } from '../lib/auth';
-import { createAuthor, initializeDefaultCategories } from '../lib/db';
+import { createAuthor } from '../lib/db';
+import { pickImage } from '../lib/imageStorage';
+import { pickAndRestoreBackup } from '../lib/backup';
+import { openPendingShare } from '../lib/navigation';
 
 type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
 
+// Chowder is local-only: this just creates the on-device profile used as the
+// author name on shared lists. There is no server account or password.
 export default function CreateAccountScreen() {
   const navigation = useNavigation<NavigationProp>();
   const [displayName, setDisplayName] = useState('');
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
   const [avatarUri, setAvatarUri] = useState<string | undefined>();
-  const [isLoading, setIsLoading] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
 
   const handlePickImage = async () => {
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      allowsEditing: true,
-      aspect: [1, 1],
-      quality: 0.8,
-    });
-
-    if (!result.canceled && result.assets[0]) {
-      setAvatarUri(result.assets[0].uri);
-    }
+    const uri = await pickImage({ aspect: [1, 1] });
+    if (uri) setAvatarUri(uri);
   };
 
   const handleContinue = async () => {
-    if (!displayName.trim()) {
-      Alert.alert('Required', 'Please enter your display name');
+    const name = displayName.trim();
+    if (!name) {
+      Alert.alert('Name required', 'Enter the name friends will see on lists you share.');
       return;
     }
-    if (!email.trim()) {
-      Alert.alert('Required', 'Please enter your email');
-      return;
-    }
-    if (!password || password.length < 6) {
-      Alert.alert('Required', 'Please enter a password (at least 6 characters)');
-      return;
-    }
-
-    setIsLoading(true);
+    setIsSaving(true);
     try {
-      // Sign up with backend
-      const { user, emailSent } = await signUp(email.trim(), password, displayName.trim());
-      
-      // Create local author profile
-      await createAuthor(displayName.trim(), avatarUri, email.trim(), user.id);
-      
-      // Ensure default categories exist (in case they weren't created during init)
-      await initializeDefaultCategories();
-      
-      // Show success message with email status
-      if (emailSent) {
-        Alert.alert(
-          'Welcome!',
-          `Account created successfully! A welcome email has been sent to ${email.trim()}.`,
-          [{ text: 'OK', onPress: () => navigation.replace('Main') }]
-        );
-      } else {
-        navigation.replace('Main');
-      }
+      await createAuthor(name, avatarUri);
+      navigation.reset({ index: 0, routes: [{ name: 'Main' }] });
+      // If they arrived via a share link, continue to the import screen.
+      setTimeout(openPendingShare, 0);
     } catch (error: any) {
-      console.error('Failed to create account:', error);
-      Alert.alert('Error', error.message || 'Failed to create account. Please try again.');
+      console.error('Failed to create profile:', error);
+      Alert.alert('Error', error?.message || 'Could not save your profile. Please try again.');
     } finally {
-      setIsLoading(false);
+      setIsSaving(false);
     }
   };
 
+  const handleRestore = async () => {
+    const restored = await pickAndRestoreBackup();
+    if (restored) navigation.reset({ index: 0, routes: [{ name: 'Main' }] });
+  };
+
+  const canContinue = displayName.trim().length > 0 && !isSaving;
+
   return (
     <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
-      <View style={styles.content}>
-        {/* Logo */}
+      <KeyboardAvoidingView style={styles.content} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <View style={styles.logoContainer}>
           <Image source={require('../assets/centericon.png')} style={styles.logoImage} />
         </View>
 
         <Text style={styles.title}>Welcome to Chowder</Text>
-        <Text style={styles.subtitle}>Create your profile to get started</Text>
+        <Text style={styles.subtitle}>Everything stays on this device. What should we call you?</Text>
 
-        {/* Avatar */}
-        <TouchableOpacity style={styles.avatarContainer} onPress={handlePickImage}>
+        <TouchableOpacity style={styles.avatarContainer} onPress={handlePickImage} accessibilityLabel="Choose profile photo">
           {avatarUri ? (
             <Image source={{ uri: avatarUri }} style={styles.avatar} />
           ) : (
@@ -109,67 +86,33 @@ export default function CreateAccountScreen() {
           </View>
         </TouchableOpacity>
 
-        {/* Display Name Input */}
         <View style={styles.inputContainer}>
-          <Text style={styles.label}>Display Name</Text>
+          <Text style={styles.label}>Your name</Text>
           <TextInput
             style={styles.input}
             placeholder="e.g., Cam"
             placeholderTextColor={theme.colors.textSecondary}
             value={displayName}
             onChangeText={setDisplayName}
+            onSubmitEditing={handleContinue}
+            returnKeyType="done"
             autoFocus
             maxLength={50}
           />
         </View>
 
-        {/* Email Input */}
-        <View style={styles.inputContainer}>
-          <Text style={styles.label}>Email</Text>
-          <TextInput
-            style={styles.input}
-            placeholder="your.email@example.com"
-            placeholderTextColor={theme.colors.textSecondary}
-            value={email}
-            onChangeText={setEmail}
-            keyboardType="email-address"
-            autoCapitalize="none"
-            autoCorrect={false}
-          />
-        </View>
-
-        {/* Password Input */}
-        <View style={styles.inputContainer}>
-          <Text style={styles.label}>Password</Text>
-          <TextInput
-            style={styles.input}
-            placeholder="At least 6 characters"
-            placeholderTextColor={theme.colors.textSecondary}
-            value={password}
-            onChangeText={setPassword}
-            secureTextEntry
-            autoCapitalize="none"
-            autoCorrect={false}
-          />
-        </View>
-
-        {/* Continue Button */}
         <TouchableOpacity
-          style={[styles.button, (!displayName.trim() || !email.trim() || !password || isLoading) && styles.buttonDisabled]}
+          style={[styles.button, !canContinue && styles.buttonDisabled]}
           onPress={handleContinue}
-          disabled={!displayName.trim() || !email.trim() || !password || isLoading}
+          disabled={!canContinue}
         >
-          <Text style={styles.buttonText}>{isLoading ? 'Creating...' : 'Create Account'}</Text>
+          <Text style={styles.buttonText}>{isSaving ? 'Saving…' : 'Get Started'}</Text>
         </TouchableOpacity>
 
-        {/* Login Link */}
-        <TouchableOpacity
-          style={styles.linkButton}
-          onPress={() => navigation.navigate('Login')}
-        >
-          <Text style={styles.linkText}>Already have an account? Sign in</Text>
+        <TouchableOpacity style={styles.linkButton} onPress={handleRestore}>
+          <Text style={styles.linkText}>Restore from a backup file</Text>
         </TouchableOpacity>
-      </View>
+      </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
