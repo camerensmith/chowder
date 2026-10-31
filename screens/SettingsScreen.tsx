@@ -205,7 +205,7 @@ export default function SettingsScreen() {
               onPress={() => navigation.navigate('TileProvider')}
               activeOpacity={0.7}
             >
-              <Text style={styles.settingLabel}>Tile Provider</Text>
+              <Text style={styles.settingLabel}>Map Style</Text>
               <View style={styles.settingRight}>
                 <Text style={styles.settingValue}>{tileProviderName}</Text>
                 <MaterialCommunityIcons name="chevron-right" size={20} color={theme.colors.textSecondary} />

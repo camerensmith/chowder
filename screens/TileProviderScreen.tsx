@@ -45,7 +45,7 @@ export default function TileProviderScreen() {
         <TouchableOpacity onPress={() => navigation.goBack()}>
           <MaterialCommunityIcons name="arrow-left" size={24} color={theme.colors.text} />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Tile Provider</Text>
+        <Text style={styles.headerTitle}>Map Style</Text>
         <View style={styles.placeholder} />
       </View>
 
