@@ -8,6 +8,19 @@ const DB_VERSION = 3;
 
 let db: IDBDatabase | null = null;
 
+// Change notifications: fired after every successful write so features like
+// cloud backup can react (lib/cloud/sync.ts debounces these).
+const changeListeners = new Set<() => void>();
+export function onDataChange(listener: () => void): () => void {
+  changeListeners.add(listener);
+  return () => changeListeners.delete(listener);
+}
+function notifyChange() {
+  changeListeners.forEach(l => {
+    try { l(); } catch { /* listener errors must never break a write */ }
+  });
+}
+
 // Object store names
 const STORES = {
   author: 'author',
@@ -189,6 +202,7 @@ async function put<T>(storeName: string, item: T): Promise<void> {
     const request = store.put(item);
 
     request.onsuccess = () => {
+      notifyChange();
       resolve();
     };
 
@@ -206,6 +220,7 @@ async function remove(storeName: string, id: string): Promise<void> {
     const request = store.delete(id);
 
     request.onsuccess = () => {
+      notifyChange();
       resolve();
     };
 
@@ -406,6 +421,7 @@ export async function addTagToPlace(placeId: string, tagId: string): Promise<voi
     const request = store.put({ placeId, tagId });
 
     request.onsuccess = () => {
+      notifyChange();
       resolve();
     };
 
@@ -423,6 +439,7 @@ export async function removeTagFromPlace(placeId: string, tagId: string): Promis
     const request = store.delete([placeId, tagId]);
 
     request.onsuccess = () => {
+      notifyChange();
       resolve();
     };
 

@@ -22,6 +22,7 @@ import { exportBackupToFile, pickAndRestoreBackup } from '../lib/backup';
 import { pickImage } from '../lib/imageStorage';
 import { applyUpdate, checkForUpdates } from '../lib/pwa';
 import { useUpdateState } from '../components/UpdateBanner';
+import CloudBackupSection from '../components/CloudBackupSection';
 import { getTileProviderPreference, getTileProvider } from '../lib/tileProviders';
 import { getRatingScalePreference, setRatingScalePreference, RatingScale } from '../lib/ratingScale';
 
@@ -278,6 +279,8 @@ export default function SettingsScreen() {
             </View>
           ))}
         </View>
+
+        <CloudBackupSection onRestored={() => { loadAuthor(); loadFriendLists(); }} />
 
         {/* Your data */}
         <View style={styles.section}>

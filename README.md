@@ -54,6 +54,30 @@ as the author on lists you share. Everything else lives on the device
 (SQLite on iOS/Android, IndexedDB on web), so **Settings → Backup Data** is the
 only copy outside the device — use it, and **Restore** to move to a new phone.
 
+### Cloud backup (Dropbox, web/PWA)
+
+Settings → Cloud Backup → **Connect Dropbox** keeps a live copy in your Dropbox:
+`Apps/<app name>/chowder-data.json` (everything except photo bytes) plus
+`photos/<hash>.jpg` (each photo uploaded once). Changes upload a few seconds
+after you make them and when the app goes to the background. If another device
+changed the Dropbox copy, Chowder asks which copy to keep instead of overwriting.
+**Restore from Dropbox** (Settings, or the welcome screen on a new phone)
+replaces this device's data with the cloud copy. Importing a friend's share code
+stays additive. On native builds, use Backup/Restore files for now.
+
+One-time Dropbox app setup (no server or secret needed — OAuth PKCE):
+
+1. Go to https://www.dropbox.com/developers/apps → **Create app** →
+   *Scoped access* → *App folder* → pick a unique name (e.g. `Chowder-Cam`).
+2. **Permissions** tab: tick `files.content.write` and `files.content.read`, then **Submit**
+   (do this before anyone connects; tokens keep the scopes they were issued with).
+3. **Settings** tab: under *OAuth 2 → Redirect URIs* add
+   `https://camerensmith.github.io/chowder/`, and set *Allow public clients
+   (Implicit Grant & PKCE)* to **Allow**.
+4. Copy the **App key** (public, not the secret) into `DROPBOX_APP_KEY_DEFAULT`
+   in `lib/cloud/dropbox.ts` and deploy. Until then the app asks for the key
+   once in Settings.
+
 Share codes (`chowder1:…`) contain the whole list, so they import on any device.
 On web, the share link (`…/chowder/#share=…`) opens straight into the import screen.
 
