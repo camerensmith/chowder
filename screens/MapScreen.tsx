@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useCallback, useEffect, useState, useRef } from 'react';
 import {
   View,
   Text,
@@ -6,14 +6,12 @@ import {
   TouchableOpacity,
   StyleSheet,
   Image,
-  Modal,
   FlatList,
   Switch,
   Alert,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Location from 'expo-location';
-import * as ImagePicker from 'expo-image-picker';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -25,8 +23,9 @@ import {
   getCategory,
   getVisitsForPlace,
   getPlace,
-  getListItems,
+  getAllListItems,
   getAllLists,
+  getListIdsForPlace,
   addPlaceToList,
   removePlaceFromList,
   updatePlace,
@@ -39,7 +38,8 @@ import PlaceSaveModal from '../components/PlaceSaveModal';
 import PlaceInfoCard from '../components/PlaceInfoCard';
 import MapFilterModal, { MapFilters } from '../components/MapFilterModal';
 import AddToListModal from '../components/AddToListModal';
-import { persistImageLocally, uploadToCloudflare } from '../lib/imageStorage';
+import BottomSheet from '../components/BottomSheet';
+import { pickImage } from '../lib/imageStorage';
 
 type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
 
@@ -57,7 +57,7 @@ const DEFAULT_FILTERS: MapFilters = {
 export default function MapScreen() {
   const navigation = useNavigation<NavigationProp>();
   const insets = useSafeAreaInsets();
-  const [places, setPlaces] = useState<any[]>([]);
+  const [places, setPlaces] = useState<Place[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [isSearching, setIsSearching] = useState(false);
   const [showSearchModal, setShowSearchModal] = useState(false);
@@ -75,7 +75,7 @@ export default function MapScreen() {
   const [showFilterModal, setShowFilterModal] = useState(false);
   const [filters, setFilters] = useState<MapFilters>(DEFAULT_FILTERS);
   const [allPlaces, setAllPlaces] = useState<Place[]>([]);
-  const [filteredPlaces, setFilteredPlaces] = useState<Place[]>([]);
+  const filterRunRef = useRef(0);
 
   // Recenter: only set when user explicitly presses the recenter button; cleared after one use
   const [recenterTarget, setRecenterTarget] = useState<{ lat: number; lng: number } | null>(null);
@@ -97,65 +97,43 @@ export default function MapScreen() {
   const recenterButtonBottomWithCard = cardHeight + cardBottomOffset + theme.spacing.md; // Extra spacing above card
 
   useEffect(() => {
-    loadPlaces();
     // Try to get location silently in background (don't show errors on initial load)
     getCurrentLocation(false);
-    loadFriendLists();
   }, []);
 
-  // Reload places when screen comes into focus (e.g., after editing a place)
+  // Reload whenever the tab is focused (e.g. after editing or deleting a place).
   useEffect(() => {
-    const unsubscribe = navigation.addListener('focus', () => {
+    const reload = () => {
       loadPlaces();
       loadFriendLists();
-    });
+    };
+    reload();
+    const unsubscribe = navigation.addListener('focus', reload);
     return unsubscribe;
   }, [navigation]);
 
-  // Re-apply filters when active friend lists change
+  // Re-filter whenever the data or any filter changes.
   useEffect(() => {
-    const effectiveFilters = { ...filters, listIds: getEffectiveListIds() };
-    applyFilters(allPlaces, effectiveFilters);
-  }, [activeFriendListIds, filters, allPlaces]);
+    applyFilters(allPlaces, { ...filters, listIds: [...new Set([...filters.listIds, ...activeFriendListIds])] });
+  }, [allPlaces, filters, activeFriendListIds]);
 
   const getCurrentLocation = async (recenterAfter = false) => {
     try {
       const { status } = await Location.requestForegroundPermissionsAsync();
       if (status !== 'granted') {
         if (recenterAfter) {
-          console.log('Location permission denied');
+          Alert.alert('Location unavailable', 'Allow location access to center the map on you.');
         }
         return;
       }
-
-      // Use lower accuracy for better success rate
-      const location = await Location.getCurrentPositionAsync({
-        accuracy: Location.Accuracy.Low, // Lower accuracy = faster, more reliable
-      });
-      
-      setUserLocation({
-        latitude: location.coords.latitude,
-        longitude: location.coords.longitude,
-      });
-      // Only recenter the map when the user explicitly pressed the recenter button
+      const location = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+      setUserLocation({ latitude: location.coords.latitude, longitude: location.coords.longitude });
       if (recenterAfter) {
-        setRecenterTarget({
-          lat: location.coords.latitude,
-          lng: location.coords.longitude,
-        });
+        setRecenterTarget({ lat: location.coords.latitude, lng: location.coords.longitude });
       }
     } catch (error: any) {
-      // Silently handle location errors - they're common on web browsers
-      // Error codes:
-      // 1 = PERMISSION_DENIED
-      // 2 = POSITION_UNAVAILABLE (common on web - no GPS, location services disabled, etc.)
-      // 3 = TIMEOUT
-      // All are non-fatal - app works fine without location
-      
-      // Only show a single helpful message if user explicitly requested location
-      if (recenterAfter && error?.code === 2) {
-        // On web browsers, location often fails - this is normal
-        console.log('Location unavailable. This is common on web browsers. The app works fine without location.');
+      if (recenterAfter) {
+        Alert.alert('Location unavailable', 'Your device could not determine your location right now.');
       }
     }
   };
@@ -163,127 +141,70 @@ export default function MapScreen() {
   const loadPlaces = async () => {
     try {
       const loadedPlaces = await getAllPlaces();
-      if (selectedPlace && !loadedPlaces.some(place => place.id === selectedPlace.id)) {
-        setSelectedPlace(null);
-        setSelectedPlaceCategory(undefined);
-        setSelectedPlaceImage(undefined);
-      }
+      setSelectedPlace(current => (current && !loadedPlaces.some(p => p.id === current.id) ? null : current));
       setAllPlaces(loadedPlaces);
-      applyFilters(loadedPlaces, filters);
     } catch (error) {
       console.error('Failed to load places:', error);
     }
   };
 
-  const applyFilters = async (places: Place[], currentFilters: MapFilters) => {
-    let filtered = [...places];
+  const applyFilters = async (source: Place[], currentFilters: MapFilters) => {
+    // Filters run async; ignore results from an older run that finishes late.
+    const run = ++filterRunRef.current;
+    let filtered = [...source];
 
-    // Filter by text search
-    if (currentFilters.searchText && currentFilters.searchText.trim().length > 0) {
-      const searchLower = currentFilters.searchText.toLowerCase().trim();
-      filtered = filtered.filter(place => {
-        const nameMatch = place.name?.toLowerCase().includes(searchLower) || false;
-        const addressMatch = place.address?.toLowerCase().includes(searchLower) || false;
-        const notesMatch = place.notes?.toLowerCase().includes(searchLower) || false;
-        return nameMatch || addressMatch || notesMatch;
-      });
+    const search = currentFilters.searchText?.trim().toLowerCase();
+    if (search) {
+      filtered = filtered.filter(place =>
+        [place.name, place.address, place.notes].some(field => field?.toLowerCase().includes(search))
+      );
     }
 
-    // Filter by categories
     if (currentFilters.categoryIds.length > 0) {
       filtered = filtered.filter(p => p.categoryId && currentFilters.categoryIds.includes(p.categoryId));
     }
 
-    // Filter by tags
     if (currentFilters.tagIds.length > 0) {
-      const placesWithTags = await Promise.all(
-        filtered.map(async (place) => {
-          // Load place with tags
-          const placeWithTags = await getPlace(place.id);
-          const tagIds = placeWithTags?.tagIds || [];
-          return { place, tagIds };
-        })
-      );
-      filtered = placesWithTags
-        .filter(({ tagIds }) => currentFilters.tagIds.some(tagId => tagIds.includes(tagId)))
-        .map(({ place }) => place);
+      filtered = filtered.filter(p => currentFilters.tagIds.some(tagId => p.tagIds?.includes(tagId)));
     }
 
-    // Filter by lists
     if (currentFilters.listIds.length > 0) {
-      const placesInLists = await Promise.all(
-        currentFilters.listIds.map(async (listId) => {
-          const items = await getListItems(listId);
-          return items.map(item => item.placeId);
-        })
-      );
-      const placeIdsInLists = new Set(placesInLists.flat());
+      const items = await getAllListItems();
+      const listIds = new Set(currentFilters.listIds);
+      const placeIdsInLists = new Set(items.filter(li => listIds.has(li.listId)).map(li => li.placeId));
       filtered = filtered.filter(p => placeIdsInLists.has(p.id));
     }
 
-    // Filter by rating
     if (currentFilters.ratingFilterType !== 'none') {
-      const placesWithRatings = await Promise.all(
-        filtered.map(async (place) => {
-          // Get the display rating for the place
-          const visits = await getVisitsForPlace(place.id);
-          let rating: number | undefined;
-          
-          // Visits no longer have ratings - only use overallRatingManual
-          rating = place.overallRatingManual;
-          
-          return { place, rating: rating || 0 };
-        })
-      );
-
       const { ratingFilterType, minRating, maxRating, exactRating } = currentFilters;
-      const filteredPlacesWithRatings = placesWithRatings.filter((item) => {
-        const { rating } = item;
-        if (ratingFilterType === 'min' && minRating !== undefined) {
-          return rating >= minRating;
-        }
-        if (ratingFilterType === 'max' && maxRating !== undefined) {
-          return rating <= maxRating;
-        }
-        if (ratingFilterType === 'exact' && exactRating !== undefined) {
-          return Math.abs(rating - exactRating) < 0.1; // Allow small floating point differences
-        }
+      filtered = filtered.filter(place => {
+        const rating = place.overallRating ?? 0;
+        if (ratingFilterType === 'min' && minRating !== undefined) return rating >= minRating;
+        if (ratingFilterType === 'max' && maxRating !== undefined) return rating <= maxRating;
+        if (ratingFilterType === 'exact' && exactRating !== undefined) return Math.abs(rating - exactRating) < 0.25;
         return true;
       });
-      
-      filtered = filteredPlacesWithRatings.map((item) => item.place);
     }
 
-    setFilteredPlaces(filtered);
-    setPlaces(filtered);
+    if (run === filterRunRef.current) setPlaces(filtered);
   };
 
   const handleFiltersChange = (newFilters: MapFilters) => {
     setFilters(newFilters);
-    const effectiveFilters = { ...newFilters, listIds: [...new Set([...newFilters.listIds, ...Array.from(activeFriendListIds)])] };
-    applyFilters(allPlaces, effectiveFilters);
   };
 
   const clearFiltersAndReloadPlaces = async () => {
     setFilters(DEFAULT_FILTERS);
-    const loadedPlaces = await getAllPlaces();
-    setAllPlaces(loadedPlaces);
-    applyFilters(loadedPlaces, DEFAULT_FILTERS);
+    setActiveFriendListIds(new Set());
+    await loadPlaces();
   };
 
   const handleOpenAddToList = async () => {
     if (!selectedPlace) return;
     try {
-      const allLists = await getAllLists();
-      const listsWithPlace: List[] = [];
-      for (const list of allLists) {
-        const items = await getListItems(list.id);
-        if (items.some(item => item.placeId === selectedPlace.id)) {
-          listsWithPlace.push(list);
-        }
-      }
+      const [allLists, memberOf] = await Promise.all([getAllLists(), getListIdsForPlace(selectedPlace.id)]);
       setModalAllLists(allLists);
-      setModalPlaceLists(listsWithPlace);
+      setModalPlaceLists(allLists.filter(l => memberOf.includes(l.id)));
       setShowAddToListModal(true);
     } catch (error) {
       console.error('Failed to load lists:', error);
@@ -309,27 +230,13 @@ export default function MapScreen() {
 
   const handleAddImageFromMap = async () => {
     if (!selectedPlace) return;
+    const uri = await pickImage();
+    if (!uri) return;
     try {
-      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      if (status !== 'granted') {
-        Alert.alert('Permission needed', 'Please allow access to your photo library.');
-        return;
-      }
-      const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
-        allowsEditing: true,
-        aspect: [4, 3],
-        quality: 0.6,
-      });
-      if (!result.canceled && result.assets.length > 0) {
-        const stableUri = await persistImageLocally(result.assets[0].uri);
-        const cfId = await uploadToCloudflare(stableUri).catch(() => null);
-        await updatePlace(selectedPlace.id, { coverImageUri: stableUri, cloudflareImageId: cfId ?? undefined });
-        setSelectedPlaceImage(stableUri);
-        // Refresh place data
-        const updated = await getPlace(selectedPlace.id);
-        if (updated) setSelectedPlace(updated);
-      }
+      await updatePlace(selectedPlace.id, { coverImageUri: uri });
+      setSelectedPlaceImage(uri);
+      const updated = await getPlace(selectedPlace.id);
+      if (updated) setSelectedPlace(updated);
     } catch (error) {
       console.error('Failed to add image:', error);
       Alert.alert('Error', 'Failed to update photo.');
@@ -355,13 +262,6 @@ export default function MapScreen() {
       }
       return next;
     });
-  };
-
-  // Apply friend list filter on top of existing filters
-  const getEffectiveListIds = () => {
-    const friendIds = Array.from(activeFriendListIds);
-    const filterIds = filters.listIds;
-    return [...new Set([...filterIds, ...friendIds])];
   };
 
   const handleSearchSelect = async (result: NominatimResult) => {
@@ -497,13 +397,17 @@ export default function MapScreen() {
       setSelectedPlaceCategory(undefined);
     }
 
-    // Load most recent visit photo if available
+    // Prefer the cover photo, else the most recent visit photo.
     try {
-      const visits = await getVisitsForPlace(place.id);
-      const visitWithPhoto = visits.find(v => v.photoUri);
-      setSelectedPlaceImage(visitWithPhoto?.photoUri);
+      const fresh = await getPlace(place.id);
+      if (fresh?.coverImageUri) {
+        setSelectedPlaceImage(fresh.coverImageUri);
+      } else {
+        const visits = await getVisitsForPlace(place.id);
+        setSelectedPlaceImage(visits.find(v => v.photoUri)?.photoUri);
+      }
     } catch (error) {
-      console.error('Failed to load visit photo:', error);
+      console.error('Failed to load place photo:', error);
       setSelectedPlaceImage(undefined);
     }
   };
@@ -519,13 +423,13 @@ export default function MapScreen() {
     <SafeAreaView style={styles.container} edges={['top']}>
       {/* Header */}
       <View style={styles.header}>
-        <TouchableOpacity onPress={loadPlaces}>
+        <TouchableOpacity onPress={loadPlaces} accessibilityLabel="Refresh" accessibilityRole="button">
           <MaterialCommunityIcons name="refresh" size={28} color={theme.colors.primary} />
         </TouchableOpacity>
         <View style={styles.logoContainer}>
           <Image source={require('../assets/centericon.png')} style={styles.logoImage} />
         </View>
-        <TouchableOpacity onPress={() => setShowSearchModal(true)}>
+        <TouchableOpacity onPress={() => setShowSearchModal(true)} accessibilityLabel="Add a place" accessibilityRole="button">
           <View style={styles.addButton}>
             <MaterialCommunityIcons name="plus" size={28} color={theme.colors.onSecondary} />
           </View>
@@ -563,7 +467,7 @@ export default function MapScreen() {
             )}
           </View>
         </TouchableOpacity>
-        <TouchableOpacity onPress={() => setShowFilterModal(true)}>
+        <TouchableOpacity onPress={() => setShowFilterModal(true)} accessibilityLabel="Filters" accessibilityRole="button">
           <View style={styles.filterButton}>
             <MaterialCommunityIcons name="filter-variant" size={20} color={theme.colors.secondary} />
             {(filters.categoryIds.length > 0 || filters.tagIds.length > 0 || filters.listIds.length > 0 || filters.ratingFilterType !== 'none') && (
@@ -582,7 +486,6 @@ export default function MapScreen() {
       <View style={styles.mapContainer}>
         <MapView
           places={places}
-          onPlacePress={(place) => navigation.navigate('PlaceDetail', { placeId: place.id })}
           onPlaceSelect={handlePlaceSelect}
           onMapClick={handleMapClick}
           selectedPlaceId={selectedPlace?.id}
@@ -691,55 +594,33 @@ export default function MapScreen() {
       />
 
       {/* Friend Lists Panel */}
-      <Modal
-        visible={showFriendPanel}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setShowFriendPanel(false)}
-      >
-        <TouchableOpacity
-          style={styles.friendPanelOverlay}
-          activeOpacity={1}
-          onPress={() => setShowFriendPanel(false)}
-        >
-          <View style={styles.friendPanel}>
-            <View style={styles.friendPanelHandle} />
-            <View style={styles.friendPanelHeader}>
-              <Text style={styles.friendPanelTitle}>Friends' Lists</Text>
-              <TouchableOpacity onPress={() => setShowFriendPanel(false)}>
-                <MaterialCommunityIcons name="close" size={22} color={theme.colors.text} />
+      <BottomSheet visible={showFriendPanel} onClose={() => setShowFriendPanel(false)} title="Friends' Lists" maxHeightFraction={0.7}>
+        {friendLists.length === 0 ? (
+          <Text style={styles.friendPanelEmpty}>
+            No imported friend lists yet.{'\n'}Import a share code in Settings.
+          </Text>
+        ) : (
+          <FlatList
+            data={friendLists}
+            keyExtractor={item => item.id}
+            renderItem={({ item }) => (
+              <TouchableOpacity style={styles.friendListRow} onPress={() => handleToggleFriendList(item.id)} activeOpacity={0.7}>
+                <View style={styles.friendListInfo}>
+                  <Text style={styles.friendListName}>{item.name}</Text>
+                  {item.importedAt ? (
+                    <Text style={styles.friendListMeta}>{new Date(item.importedAt).toLocaleDateString()}</Text>
+                  ) : null}
+                </View>
+                <Switch
+                  value={activeFriendListIds.has(item.id)}
+                  onValueChange={() => handleToggleFriendList(item.id)}
+                  trackColor={{ false: theme.colors.border, true: theme.colors.primary }}
+                />
               </TouchableOpacity>
-            </View>
-            {friendLists.length === 0 ? (
-              <Text style={styles.friendPanelEmpty}>
-                No imported friend lists yet.{'\n'}Import a share code in Settings.
-              </Text>
-            ) : (
-              <FlatList
-                data={friendLists}
-                keyExtractor={item => item.id}
-                renderItem={({ item }) => (
-                  <View style={styles.friendListRow}>
-                    <View style={styles.friendListInfo}>
-                      <Text style={styles.friendListName}>{item.name}</Text>
-                      {item.importedAt && (
-                        <Text style={styles.friendListMeta}>
-                          {new Date(item.importedAt).toLocaleDateString()}
-                        </Text>
-                      )}
-                    </View>
-                    <Switch
-                      value={activeFriendListIds.has(item.id)}
-                      onValueChange={() => handleToggleFriendList(item.id)}
-                      trackColor={{ false: theme.colors.border, true: theme.colors.primary }}
-                    />
-                  </View>
-                )}
-              />
             )}
-          </View>
-        </TouchableOpacity>
-      </Modal>
+          />
+        )}
+      </BottomSheet>
     </SafeAreaView>
   );
 }

@@ -15,8 +15,15 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RouteProp } from '@react-navigation/native';
 import { RootStackParamList, SharePayload } from '../types';
 import { theme } from '../lib/theme';
-import { parseShareCode, storeShareCode } from '../lib/sharing';
-import { getAuthor, createList, addPlaceToList, createPlace, getAllLists, deleteList } from '../lib/db';
+import { parseShareCode } from '../lib/sharing';
+import { createList, addPlaceToList, createPlace, getAllPlaces, getImportedFriendLists, deleteList, getAllCategories } from '../lib/db';
+import { Place } from '../types';
+
+/** ~50 m: treat a shared place as the same one you already have. */
+function findExistingPlace(places: Place[], name: string, lat: number, lng: number): Place | undefined {
+  const norm = (s: string) => s.trim().toLowerCase();
+  return places.find(p => norm(p.name) === norm(name) && Math.abs(p.latitude - lat) < 0.0005 && Math.abs(p.longitude - lng) < 0.0005);
+}
 
 type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
 type RoutePropType = RouteProp<RootStackParamList, 'ShareViewer'>;
@@ -48,70 +55,55 @@ export default function ShareViewerScreen() {
       const parsed = parseShareCode(codeToParse.trim());
       setPayload(parsed);
       setShowCodeInput(false);
-    } catch (error) {
-      console.error('Failed to parse code:', error);
-      Alert.alert('Invalid Code', 'This share code is not valid or is corrupted');
+    } catch (error: any) {
+      Alert.alert('Invalid Code', error?.message || 'This share code is not valid.');
     } finally {
       setIsLoading(false);
     }
   };
 
   const handleImport = async () => {
-    if (!payload) return;
+    if (!payload || isImporting) return;
 
     try {
       setIsImporting(true);
+      const listName = `${payload.title} (from ${payload.authorName})`;
 
-      // Create new list tagged with the friend's name
-      const newList = await createList(
-        `${payload.title} (from ${payload.authorName})`,
-        `Imported from ${payload.authorName}`,
-        undefined,
-        undefined,
-        undefined,
-        payload.authorName,
-        Date.now()
+      const [existingPlaces, categories, friendLists] = await Promise.all([
+        getAllPlaces(),
+        getAllCategories(),
+        getImportedFriendLists(),
+      ]);
+      const categoryIdByName = new Map(
+        categories.filter(c => c.type === 'place').map(c => [c.name.toLowerCase(), c.id])
       );
 
-      // Add all places to the database and then to the list
-      for (const placeData of payload.places) {
-        try {
-          const place = await createPlace(
-            placeData.name,
-            placeData.lat,
-            placeData.lng,
-            placeData.address
-          );
-          await addPlaceToList(newList.id, place.id);
-        } catch (error) {
-          console.error(`Failed to add place ${placeData.name}:`, error);
+      const newList = await createList(listName, `Imported from ${payload.authorName}`, undefined, undefined, payload.authorName, Date.now());
+
+      // Reuse places you already have instead of creating duplicate pins.
+      let added = 0;
+      for (const shared of payload.places) {
+        let place = findExistingPlace(existingPlaces, shared.name, shared.lat, shared.lng);
+        if (!place) {
+          const categoryId = shared.category ? categoryIdByName.get(shared.category.toLowerCase()) : undefined;
+          place = await createPlace(shared.name, shared.lat, shared.lng, shared.address, categoryId);
+          existingPlaces.push(place);
         }
+        await addPlaceToList(newList.id, place.id);
+        added++;
       }
 
-      // Remove old imported lists from the same friend AFTER the new list is saved
-      const existingLists = await getAllLists();
-      const oldFriendLists = existingLists.filter(
-        l => l.importedFrom === payload.authorName && l.id !== newList.id
-      );
-      for (const old of oldFriendLists) {
+      // Replace the previous import of this same list from this same friend.
+      for (const old of friendLists.filter(l => l.importedFrom === payload.authorName && l.name === listName)) {
         await deleteList(old.id);
       }
 
-      Alert.alert(
-        'Imported!',
-        `Successfully imported "${newList.name}" with ${payload.places.length} places`,
-        [
-          {
-            text: 'OK',
-            onPress: () => {
-              navigation.navigate('Main');
-            },
-          },
-        ]
-      );
-    } catch (error) {
+      Alert.alert('Imported!', `Saved "${newList.name}" with ${added} ${added === 1 ? 'place' : 'places'}.`, [
+        { text: 'View List', onPress: () => navigation.replace('ListDetail', { listId: newList.id }) },
+      ]);
+    } catch (error: any) {
       console.error('Failed to import list:', error);
-      Alert.alert('Error', 'Failed to import list');
+      Alert.alert('Import failed', error?.message || 'Could not import this list.');
     } finally {
       setIsImporting(false);
     }
@@ -150,7 +142,9 @@ export default function ShareViewerScreen() {
             placeholderTextColor={theme.colors.textSecondary}
             value={shareCode}
             onChangeText={setShareCode}
-            autoCapitalize="characters"
+            autoCapitalize="none"
+            autoCorrect={false}
+            multiline
             autoFocus
           />
 
@@ -180,13 +174,14 @@ export default function ShareViewerScreen() {
 
           <FlatList
             data={payload.places}
+            style={{ alignSelf: 'stretch' }}
             keyExtractor={(item) => item.id}
             renderItem={({ item }) => (
               <View style={styles.placeCard}>
                 <Text style={styles.placeName}>{item.name}</Text>
-                {item.address && (
+                {item.address ? (
                   <Text style={styles.placeAddress}>{item.address}</Text>
-                )}
+                ) : null}
               </View>
             )}
           />

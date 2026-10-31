@@ -26,20 +26,20 @@ export async function openDatabase(): Promise<IDBDatabase> {
   if (db) return db;
 
   // Get indexedDB from global scope
-  const idb = typeof window !== 'undefined' ? window.indexedDB : (globalThis as any).indexedDB;
+  const idb: IDBFactory | undefined = typeof window !== 'undefined' ? window.indexedDB : (globalThis as any).indexedDB;
   if (!idb) {
     throw new Error('IndexedDB is not available in this environment. This might be due to browser privacy settings or running in private/incognito mode.');
   }
 
-  return new Promise((resolve, reject) => {
+  return new Promise<IDBDatabase>((resolve, reject) => {
     const request = idb.open(DB_NAME, DB_VERSION);
     
     // Set a timeout to detect if IndexedDB is blocked
     const timeout = setTimeout(() => {
       reject(new Error('IndexedDB request timed out. This might indicate that IndexedDB is blocked by browser settings.'));
-    }, 5000);
+    }, 10000);
 
-    request.onerror = (event) => {
+    request.onerror = (event: Event) => {
       clearTimeout(timeout);
       const error = (event.target as IDBOpenDBRequest).error;
       const errorMessage = error?.message || 'Unknown error';
@@ -48,15 +48,21 @@ export async function openDatabase(): Promise<IDBDatabase> {
 
     request.onsuccess = () => {
       clearTimeout(timeout);
-      db = request.result;
-      resolve(db);
+      const opened = request.result;
+      // If another tab upgrades the schema, release our connection instead of blocking it.
+      opened.onversionchange = () => {
+        opened.close();
+        db = null;
+      };
+      db = opened;
+      resolve(opened);
     };
 
-    request.onupgradeneeded = (event) => {
+    request.onupgradeneeded = (event: IDBVersionChangeEvent) => {
       const database = (event.target as IDBOpenDBRequest).result;
       
       // Handle upgrade errors
-      database.onerror = (e) => {
+      database.onerror = (e: Event) => {
         console.error('IndexedDB upgrade error:', e);
       };
 
@@ -227,31 +233,17 @@ async function queryByIndex<T>(storeName: string, indexName: string, value: any)
   });
 }
 
-// Get all unsynced items
-export async function getAllUnsynced<T extends { synced: boolean }>(storeName: string): Promise<T[]> {
-  return queryByIndex<T>(storeName, 'synced', false);
-}
-
-// Mark item as synced
-export async function markAsSynced<T extends { id: string; apiId?: string; synced: boolean; lastSyncedAt?: number }>(
-  storeName: string,
-  localId: string,
-  apiId: string
-): Promise<void> {
-  const item = await get<T>(storeName, localId);
-  if (!item) {
-    throw new Error(`Item not found: ${localId}`);
-  }
-  item.apiId = apiId;
-  item.synced = true;
-  item.lastSyncedAt = Date.now();
-  await put(storeName, item);
-}
 
 // Author operations
 export async function getAuthor(): Promise<Author | null> {
   const authors = await getAll<Author>(STORES.author);
   return authors[0] || null;
+}
+
+export async function clearAuthors(): Promise<void> {
+  for (const author of await getAll<Author>(STORES.author)) {
+    await remove(STORES.author, author.id);
+  }
 }
 
 export async function putAuthor(author: Author): Promise<void> {

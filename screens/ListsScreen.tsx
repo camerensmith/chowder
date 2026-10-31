@@ -113,7 +113,13 @@ export default function ListsScreen() {
   };
 
   const renderListCard = ({ item }: { item: List }) => {
-    const subtitle = [item.category, item.city].filter(Boolean).join(', ') || 'Places, Favors & rares';
+    const count = item.placeCount ?? 0;
+    const subtitle = [
+      `${count} ${count === 1 ? 'place' : 'places'}`,
+      item.importedFrom ? `from ${item.importedFrom}` : null,
+      item.category,
+      item.city,
+    ].filter(Boolean).join(' · ');
     
     const renderRightActions = (progress: any, dragX: any) => {
       return (
@@ -132,6 +138,35 @@ export default function ListsScreen() {
       );
     };
     
+    const card = (
+      <TouchableOpacity
+        style={styles.listCard}
+        onPress={() => navigation.navigate('ListDetail', { listId: item.id })}
+        activeOpacity={0.7}
+      >
+        <View style={styles.listInfo}>
+          <Text style={styles.listName} numberOfLines={1}>{item.name}</Text>
+          <Text style={styles.listSubtitle} numberOfLines={1}>{subtitle}</Text>
+          {renderStarRating(item.overallRating)}
+        </View>
+        {Platform.OS === 'web' ? (
+          // Swipe gestures are unreliable in mobile browsers; use an explicit button there.
+          <TouchableOpacity
+            onPress={() => handleDeleteList(item)}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            style={{ padding: 6, marginRight: 4 }}
+            accessibilityLabel={`Delete ${item.name}`}
+            accessibilityRole="button"
+          >
+            <MaterialCommunityIcons name="trash-can-outline" size={20} color={theme.colors.textSecondary} />
+          </TouchableOpacity>
+        ) : null}
+        <MaterialCommunityIcons name="chevron-right" size={20} color={theme.colors.textSecondary} />
+      </TouchableOpacity>
+    );
+
+    if (Platform.OS === 'web') return card;
+
     return (
       <Swipeable
         ref={(ref) => {
@@ -143,18 +178,7 @@ export default function ListsScreen() {
         }}
         renderRightActions={renderRightActions}
       >
-        <TouchableOpacity
-          style={styles.listCard}
-          onPress={() => navigation.navigate('ListDetail', { listId: item.id })}
-          activeOpacity={0.7}
-        >
-          <View style={styles.listInfo}>
-            <Text style={styles.listName} numberOfLines={1}>{item.name}</Text>
-            <Text style={styles.listSubtitle} numberOfLines={1}>{subtitle}</Text>
-            {renderStarRating(item.overallRating)}
-          </View>
-          <MaterialCommunityIcons name="chevron-right" size={20} color={theme.colors.textSecondary} />
-        </TouchableOpacity>
+        {card}
       </Swipeable>
     );
   };
@@ -163,13 +187,13 @@ export default function ListsScreen() {
     <SafeAreaView style={styles.container} edges={['top']}>
       {/* Header */}
       <View style={styles.header}>
-        <TouchableOpacity onPress={loadLists}>
+        <TouchableOpacity onPress={loadLists} accessibilityLabel="Refresh" accessibilityRole="button">
           <MaterialCommunityIcons name="refresh" size={28} color={theme.colors.primary} />
         </TouchableOpacity>
         <View style={styles.logoContainer}>
           <Image source={require('../assets/centericon.png')} style={styles.logoImage} resizeMode="contain" />
         </View>
-        <TouchableOpacity onPress={handleCreateList}>
+        <TouchableOpacity onPress={handleCreateList} accessibilityLabel="Create list" accessibilityRole="button">
           <View style={styles.addButton}>
             <MaterialCommunityIcons name="plus" size={28} color={theme.colors.onSecondary} />
           </View>
@@ -186,7 +210,7 @@ export default function ListsScreen() {
         <View style={styles.emptyState}>
           <MaterialCommunityIcons name="clipboard-list" size={48} color={theme.colors.border} />
           <Text style={styles.emptyText}>No lists yet</Text>
-          <Text style={styles.emptySubtext}>Create your first list to get started</Text>
+          <Text style={styles.emptySubtext}>Tap + to create your first list</Text>
         </View>
       ) : (
         <FlatList
@@ -196,6 +220,13 @@ export default function ListsScreen() {
           contentContainerStyle={styles.listContent}
           refreshing={isLoading}
           onRefresh={loadLists}
+          ListFooterComponent={
+            lists.length > 0 ? (
+              <Text style={styles.emptySubtext}>
+                {Platform.OS === 'web' ? 'Tap the trash icon to delete a list' : 'Swipe a list left to delete it'}
+              </Text>
+            ) : null
+          }
         />
       )}
 

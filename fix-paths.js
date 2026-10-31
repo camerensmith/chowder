@@ -31,10 +31,13 @@ const withBasePath = (pathname) => {
   return `${BASE_PATH}${normalizedPath}`;
 };
 
-// Copy service worker to dist directory
+// Copy service worker to dist directory, stamping a unique build id so each
+// deploy gets its own cache (otherwise users stay pinned to an old build).
 if (fs.existsSync(swSourcePath)) {
-  fs.copyFileSync(swSourcePath, swDestPath);
-  console.log('✅ Copied service worker to dist directory');
+  const buildId = process.env.GITHUB_SHA ? process.env.GITHUB_SHA.slice(0, 12) : String(Date.now());
+  const sw = fs.readFileSync(swSourcePath, 'utf8').replace(/__BUILD_ID__/g, buildId);
+  fs.writeFileSync(swDestPath, sw, 'utf8');
+  console.log(`✅ Wrote service worker (build ${buildId})`);
 } else {
   console.warn('⚠️  Service worker source not found at:', swSourcePath);
 }
@@ -127,7 +130,7 @@ if (fs.existsSync(manifestFilePath)) {
   try {
     const manifest = JSON.parse(fs.readFileSync(manifestFilePath, 'utf8'));
     const normalizeUrlForBase = (value, fallback = '/') => {
-      const rawValue = value || fallback;
+      const rawValue = (value || fallback).replace(/^\.\//, '/');
       const normalized = rawValue.startsWith('/') ? rawValue : `/${rawValue}`;
       if (BASE_PATH === '/') return normalized;
       return normalized.startsWith(BASE_PATH) ? normalized : withBasePath(normalized);

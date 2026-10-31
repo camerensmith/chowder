@@ -8,11 +8,13 @@ import {
   Modal,
   ScrollView,
   Alert,
+  KeyboardAvoidingView,
+  Platform,
 } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Tag } from '../types';
 import { theme } from '../lib/theme';
-import { getAllTags, createTag, addTagToPlace, removeTagFromPlace, getTagsForPlace } from '../lib/db';
+import { getAllTags, createTag, addTagToPlace, removeTagFromPlace, getTagsForPlace, deleteTag } from '../lib/db';
 
 interface TagManagerProps {
   placeId: string;
@@ -71,14 +73,37 @@ export default function TagManager({ placeId, onTagsChange }: TagManagerProps) {
     }
 
     try {
-      await createTag(newTagName.trim());
+      // A tag created from a place's page is applied to that place.
+      const tag = await createTag(newTagName.trim());
+      await addTagToPlace(placeId, tag.id);
       setNewTagName('');
       setShowAddModal(false);
       await loadTags();
-    } catch (error) {
+      onTagsChange?.();
+    } catch (error: any) {
       console.error('Failed to create tag:', error);
-      Alert.alert('Error', 'Failed to create tag');
+      Alert.alert('Error', error?.message || 'Failed to create tag');
     }
+  };
+
+  const handleDeleteTag = (tag: Tag) => {
+    Alert.alert('Delete tag', `Delete the "${tag.name}" tag everywhere? Places keep everything else.`, [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Delete',
+        style: 'destructive',
+        onPress: async () => {
+          try {
+            await deleteTag(tag.id);
+            await loadTags();
+            onTagsChange?.();
+          } catch (error) {
+            console.error('Failed to delete tag:', error);
+            Alert.alert('Error', 'Failed to delete tag');
+          }
+        },
+      },
+    ]);
   };
 
   const getTagColor = (tag: Tag): string => {
@@ -92,6 +117,8 @@ export default function TagManager({ placeId, onTagsChange }: TagManagerProps) {
         <TouchableOpacity
           style={styles.addButton}
           onPress={() => setShowAddModal(true)}
+          accessibilityLabel="Create tag"
+          accessibilityRole="button"
         >
           <MaterialCommunityIcons name="plus" size={18} color={theme.colors.primary} />
         </TouchableOpacity>
@@ -99,7 +126,7 @@ export default function TagManager({ placeId, onTagsChange }: TagManagerProps) {
 
       <View style={styles.tagsContainer}>
         {allTags.length === 0 ? (
-          <Text style={styles.emptyText}>No tags yet. Create one to get started.</Text>
+          <Text style={styles.emptyText}>No tags yet. Tap + to create one (e.g. "date night").</Text>
         ) : (
           allTags.map(tag => {
             const isSelected = placeTags.some(t => t.id === tag.id);
@@ -112,6 +139,8 @@ export default function TagManager({ placeId, onTagsChange }: TagManagerProps) {
                   { borderColor: getTagColor(tag) },
                 ]}
                 onPress={() => handleToggleTag(tag)}
+                onLongPress={() => handleDeleteTag(tag)}
+                delayLongPress={450}
                 activeOpacity={0.7}
               >
                 <Text
@@ -142,7 +171,7 @@ export default function TagManager({ placeId, onTagsChange }: TagManagerProps) {
         animationType="slide"
         onRequestClose={() => setShowAddModal(false)}
       >
-        <View style={styles.modalOverlay}>
+        <KeyboardAvoidingView style={styles.modalOverlay} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
           <View style={styles.modal}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>Create Tag</Text>
@@ -179,7 +208,7 @@ export default function TagManager({ placeId, onTagsChange }: TagManagerProps) {
               </TouchableOpacity>
             </View>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
     </View>
   );

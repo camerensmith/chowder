@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import {
   View,
   Text,
@@ -10,11 +10,10 @@ import {
   Modal,
   Platform,
 } from 'react-native';
-import * as ImagePicker from 'expo-image-picker';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { persistImageLocally, uploadToCloudflare, resolveImageUri } from '../lib/imageStorage';
-import { useRoute, useNavigation } from '@react-navigation/native';
+import { pickImage } from '../lib/imageStorage';
+import { useRoute, useNavigation, useFocusEffect } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RouteProp } from '@react-navigation/native';
 import { RootStackParamList } from '../types';
@@ -25,8 +24,10 @@ import {
   getAllLists,
   addPlaceToList,
   removePlaceFromList,
-  getListItems,
+  getListIdsForPlace,
   updatePlace,
+  PlaceUpdates,
+  deleteVisit,
   deletePlace,
   getDishesForPlace,
   createVisit,
@@ -59,7 +60,7 @@ export default function PlaceDetailScreen() {
   const [isLoading, setIsLoading] = useState(true);
   const [showEditModal, setShowEditModal] = useState(false);
   const [showMenuModal, setShowMenuModal] = useState(false);
-  const [showDishes, setShowDishes] = useState(false);
+  const [showDishes, setShowDishes] = useState(true);
   const [showDishEditModal, setShowDishEditModal] = useState(false);
   const [editingDish, setEditingDish] = useState<Dish | null>(null);
   const [showVisitEditModal, setShowVisitEditModal] = useState(false);
@@ -68,9 +69,12 @@ export default function PlaceDetailScreen() {
   const [categoryName, setCategoryName] = useState<string | undefined>(undefined);
   const [ratingScale, setRatingScale] = useState<RatingScale>(5);
 
-  useEffect(() => {
-    loadPlace();
-  }, [placeId]);
+  // Reload on focus so edits made elsewhere (lists, map) show up when returning.
+  useFocusEffect(
+    useCallback(() => {
+      loadPlace();
+    }, [placeId])
+  );
 
   const loadPlace = async () => {
     try {
@@ -86,10 +90,8 @@ export default function PlaceDetailScreen() {
       const placeVisits = await getVisitsForPlace(placeId);
       setVisits(placeVisits);
 
-      // Get main image from place cover image (with CDN fallback), or most recent visit with photo
-      const visitPhoto = placeVisits.find(v => v.photoUri)?.photoUri;
-      const resolvedUri = await resolveImageUri(placeData.coverImageUri, placeData.cloudflareImageId);
-      setMainImageUri(resolvedUri || visitPhoto);
+      // Cover photo, else the most recent visit photo
+      setMainImageUri(placeData.coverImageUri || placeVisits.find(v => v.photoUri)?.photoUri);
 
       // Load category name if categoryId exists
       if (placeData.categoryId) {
@@ -108,18 +110,9 @@ export default function PlaceDetailScreen() {
       const placeDishes = await getDishesForPlace(placeId);
       setDishes(placeDishes);
 
-      const allLists = await getAllLists();
+      const [allLists, memberOf] = await Promise.all([getAllLists(), getListIdsForPlace(placeId)]);
       setLists(allLists);
-
-      // Find which lists contain this place
-      const listsWithPlace: List[] = [];
-      for (const list of allLists) {
-        const items = await getListItems(list.id);
-        if (items.some(item => item.placeId === placeId)) {
-          listsWithPlace.push(list);
-        }
-      }
-      setPlaceLists(listsWithPlace);
+      setPlaceLists(allLists.filter(l => memberOf.includes(l.id)));
     } catch (error) {
       console.error('Failed to load place:', error);
     } finally {
@@ -156,25 +149,9 @@ export default function PlaceDetailScreen() {
   };
 
   const handleDelete = () => {
-    const webWindow = (globalThis as any)?.window;
-    if (Platform.OS === 'web' && webWindow?.confirm) {
-      const confirmed = webWindow.confirm(`Delete "${place?.name}"? This action cannot be undone.`);
-      if (!confirmed) return;
-      (async () => {
-        try {
-          await deletePlace(placeId);
-          navigation.goBack();
-        } catch (error) {
-          console.error('Failed to delete place:', error);
-          Alert.alert('Error', 'Failed to delete place');
-        }
-      })();
-      return;
-    }
-
     Alert.alert(
       'Delete Place',
-      `Are you sure you want to delete "${place?.name}"? This action cannot be undone.`,
+      `Delete "${place?.name}" along with its visits and dishes? This can't be undone.`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -210,14 +187,10 @@ export default function PlaceDetailScreen() {
         // Update existing dish
         await updateDish(editingDish.id, dishData);
       } else {
-        // Create new dish - attach to most recent visit or create new visit
-        let visitIdToUse: string;
-        if (visits.length === 0) {
-          const newVisit = await createVisit(placeId);
-          visitIdToUse = newVisit.id;
-        } else {
-          visitIdToUse = visits[0].id;
-        }
+        // Attach to today's visit if there is one; otherwise this dish starts a new visit.
+        const today = new Date().toDateString();
+        const todaysVisit = visits.find(v => new Date(v.createdAt).toDateString() === today);
+        const visitIdToUse = todaysVisit ? todaysVisit.id : (await createVisit(placeId)).id;
         await createDish(visitIdToUse, dishData.name, dishData.rating, dishData.categoryId, dishData.notes, dishData.photoUri);
       }
       await loadPlace();
@@ -251,21 +224,10 @@ export default function PlaceDetailScreen() {
     );
   };
 
-  const handleSaveEdit = async (updates: { name: string; address: string; categoryId?: string; imageUri?: string; coverImageUri?: string; cloudflareImageId?: string; overallRatingManual?: number; ratingMode?: 'aggregate' | 'overall' }) => {
+  const handleSaveEdit = async (updates: PlaceUpdates) => {
     if (!place) return;
     try {
-      await updatePlace(placeId, {
-        name: updates.name,
-        address: updates.address,
-        categoryId: updates.categoryId,
-        overallRatingManual: updates.overallRatingManual,
-        ratingMode: updates.ratingMode,
-        coverImageUri: updates.coverImageUri,
-        cloudflareImageId: updates.cloudflareImageId,
-      });
-      
-      // Visits no longer store ratings - rating is only stored in overallRatingManual
-      
+      await updatePlace(placeId, updates);
       await loadPlace();
     } catch (error) {
       console.error('Failed to update place:', error);
@@ -273,23 +235,8 @@ export default function PlaceDetailScreen() {
     }
   };
 
-  const calculateAggregateRating = (): number | undefined => {
-    if (dishes.length === 0) return undefined;
-    const sum = dishes.reduce((acc, dish) => acc + dish.rating, 0);
-    return sum / dishes.length;
-  };
-
-  const getDisplayRating = (): number | undefined => {
-    if (!place) return undefined;
-    const ratingMode = place.ratingMode || 'overall';
-    
-    if (ratingMode === 'aggregate') {
-      return calculateAggregateRating();
-    } else {
-      // Use overallRatingManual if set (visits no longer have ratings)
-      return place.overallRatingManual ?? place.overallRating;
-    }
-  };
+  // Computed once in lib/db.ts (respects rating mode) so every screen agrees.
+  const getDisplayRating = (): number | undefined => place?.overallRating;
 
   const handleToggleRatingMode = async () => {
     if (!place) return;
@@ -301,6 +248,30 @@ export default function PlaceDetailScreen() {
       console.error('Failed to update rating mode:', error);
       Alert.alert('Error', 'Failed to update rating mode');
     }
+  };
+
+  const handleDeleteVisit = (visit: Visit) => {
+    const dishCount = dishes.filter(d => d.visitId === visit.id).length;
+    Alert.alert(
+      'Delete Visit',
+      `Delete your visit on ${new Date(visit.createdAt).toLocaleDateString()}${dishCount ? ` and its ${dishCount} ${dishCount === 1 ? 'dish' : 'dishes'}` : ''}?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await deleteVisit(visit.id);
+              await loadPlace();
+            } catch (error) {
+              console.error('Failed to delete visit:', error);
+              Alert.alert('Error', 'Failed to delete visit');
+            }
+          },
+        },
+      ]
+    );
   };
 
   const handleCheckIn = async () => {
@@ -335,15 +306,9 @@ export default function PlaceDetailScreen() {
 
   const handleRatingChange = async (newRating: number) => {
     if (!place) return;
-    
-    // Only allow rating when in 'overall' mode
-    if (place.ratingMode === 'aggregate') {
-      Alert.alert('Info', 'Switch to "Overall" mode to set a manual rating');
-      return;
-    }
-    
     try {
-      await updatePlace(placeId, { overallRatingManual: toInternalRating(newRating, ratingScale) });
+      // Setting stars by hand means you want a manual rating, so switch to 'overall'.
+      await updatePlace(placeId, { overallRatingManual: toInternalRating(newRating, ratingScale), ratingMode: 'overall' });
       await loadPlace();
     } catch (error) {
       console.error('Failed to update rating:', error);
@@ -352,24 +317,11 @@ export default function PlaceDetailScreen() {
   };
 
   const handleQuickAddImage = async () => {
+    const uri = await pickImage();
+    if (!uri) return;
     try {
-      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      if (status !== 'granted') {
-        Alert.alert('Permission needed', 'Please allow access to your photo library.');
-        return;
-      }
-      const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
-        allowsEditing: true,
-        aspect: [4, 3],
-        quality: 0.6,
-      });
-      if (!result.canceled && result.assets.length > 0) {
-        const stableUri = await persistImageLocally(result.assets[0].uri);
-        const cfId = await uploadToCloudflare(stableUri).catch(() => null);
-        await updatePlace(placeId, { coverImageUri: stableUri, cloudflareImageId: cfId ?? undefined });
-        await loadPlace();
-      }
+      await updatePlace(placeId, { coverImageUri: uri });
+      await loadPlace();
     } catch (error) {
       console.error('Failed to add image:', error);
       Alert.alert('Error', 'Failed to update photo.');
@@ -433,11 +385,11 @@ export default function PlaceDetailScreen() {
     <SafeAreaView style={styles.container} edges={['top']}>
       {/* Header */}
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => navigation.goBack()}>
+        <TouchableOpacity onPress={() => navigation.goBack()} accessibilityLabel="Back" accessibilityRole="button">
           <MaterialCommunityIcons name="arrow-left" size={24} color={theme.colors.text} />
         </TouchableOpacity>
         <Text style={styles.headerTitle} numberOfLines={1}>{place.name}</Text>
-        <TouchableOpacity onPress={handleMenuPress}>
+        <TouchableOpacity onPress={handleMenuPress} accessibilityLabel="More options" accessibilityRole="button">
           <MaterialCommunityIcons name="dots-vertical" size={24} color={theme.colors.text} />
         </TouchableOpacity>
       </View>
@@ -524,16 +476,14 @@ export default function PlaceDetailScreen() {
 
         {/* Dishes */}
         <View style={styles.section}>
-          <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>Dishes</Text>
-            <TouchableOpacity onPress={() => setShowDishes(!showDishes)}>
-              <MaterialCommunityIcons
-                name={showDishes ? 'chevron-up' : 'chevron-down'}
-                size={24}
-                color={theme.colors.textSecondary}
-              />
-            </TouchableOpacity>
-          </View>
+          <TouchableOpacity style={styles.sectionHeader} onPress={() => setShowDishes(!showDishes)} activeOpacity={0.7}>
+            <Text style={styles.sectionTitle}>Dishes{dishes.length ? ` (${dishes.length})` : ''}</Text>
+            <MaterialCommunityIcons
+              name={showDishes ? 'chevron-up' : 'chevron-down'}
+              size={24}
+              color={theme.colors.textSecondary}
+            />
+          </TouchableOpacity>
           {showDishes && (
             <View>
               {dishes.length === 0 ? (
@@ -559,7 +509,7 @@ export default function PlaceDetailScreen() {
                           <Text style={styles.dishRatingText}>{toDisplayRating(dish.rating, ratingScale).toFixed(1)}</Text>
                         </View>
                       </View>
-                      {dish.notes && <Text style={styles.dishNotes}>{dish.notes}</Text>}
+                      {dish.notes ? <Text style={styles.dishNotes}>{dish.notes}</Text> : null}
                     </View>
                     <TouchableOpacity
                       style={styles.dishDeleteButton}
@@ -628,7 +578,10 @@ export default function PlaceDetailScreen() {
         {/* Lists */}
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Lists</Text>
-          {lists.map(list => {
+          {lists.filter(l => !l.importedFrom).length === 0 ? (
+            <Text style={styles.emptyText}>No lists yet. Create one in the Lists tab.</Text>
+          ) : null}
+          {lists.filter(l => !l.importedFrom).map(list => {
             const isInList = placeLists.some(l => l.id === list.id);
             return (
               <TouchableOpacity
@@ -660,10 +613,21 @@ export default function PlaceDetailScreen() {
                   onPress={() => handleEditVisit(visit)}
                   activeOpacity={0.7}
                 >
-                  <View style={styles.visitHeader}>
+                  <View style={[styles.visitHeader, { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }]}>
                     <Text style={styles.visitDate}>
                       {new Date(visit.createdAt).toLocaleDateString()}
+                      {(() => {
+                        const n = dishes.filter(d => d.visitId === visit.id).length;
+                        return n ? `  ·  ${n} ${n === 1 ? 'dish' : 'dishes'}` : '';
+                      })()}
                     </Text>
+                    <TouchableOpacity
+                      onPress={() => handleDeleteVisit(visit)}
+                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                      accessibilityLabel="Delete visit"
+                    >
+                      <MaterialCommunityIcons name="delete-outline" size={18} color={theme.colors.textSecondary} />
+                    </TouchableOpacity>
                   </View>
                   {visit.notes ? (
                     <Text style={styles.visitNotes}>{visit.notes}</Text>

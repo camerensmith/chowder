@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
   View,
   Text,
@@ -14,12 +14,12 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { useRoute, useNavigation } from '@react-navigation/native';
+import { useRoute, useNavigation, useFocusEffect } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RouteProp } from '@react-navigation/native';
 import { RootStackParamList } from '../types';
 import { theme } from '../lib/theme';
-import { getList, getListItems, getAllPlaces, addPlaceToList, updateList } from '../lib/db';
+import { getList, getListItems, getAllPlaces, addPlaceToList, removePlaceFromList, updateList } from '../lib/db';
 import { List, Place } from '../types';
 import ShareCodeGenerator from '../components/ShareCodeGenerator';
 import PlaceSelectModal from '../components/PlaceSelectModal';
@@ -41,10 +41,13 @@ export default function ListDetailScreen() {
   const [renameValue, setRenameValue] = useState('');
   const [ratingScale, setRatingScale] = useState<RatingScale>(5);
 
-  useEffect(() => {
-    loadList();
-    getRatingScalePreference().then(setRatingScale);
-  }, [listId]);
+  // Reload on focus so edits/deletes made on a place show up when you come back.
+  useFocusEffect(
+    useCallback(() => {
+      loadList();
+      getRatingScalePreference().then(setRatingScale);
+    }, [listId])
+  );
 
   const loadList = async () => {
     try {
@@ -77,6 +80,25 @@ export default function ListDetailScreen() {
     }
   };
 
+  const handleRemovePlace = (place: Place) => {
+    Alert.alert('Remove from list', `Remove "${place.name}" from "${list?.name}"? The place itself is kept.`, [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Remove',
+        style: 'destructive',
+        onPress: async () => {
+          try {
+            await removePlaceFromList(listId, place.id);
+            await loadList();
+          } catch (error) {
+            console.error('Failed to remove place from list:', error);
+            Alert.alert('Error', 'Failed to remove place.');
+          }
+        },
+      },
+    ]);
+  };
+
   const handleRenamePress = () => {
     setRenameValue(list?.name ?? '');
     setShowRenameModal(true);
@@ -107,10 +129,10 @@ export default function ListDetailScreen() {
       >
         <View style={styles.placeInfo}>
           <Text style={styles.placeName} numberOfLines={1}>{item.name}</Text>
-          {item.address && (
+          {item.address ? (
             <Text style={styles.placeAddress} numberOfLines={1}>{item.address}</Text>
-          )}
-          {item.overallRating && (
+          ) : null}
+          {item.overallRating ? (
             <View style={styles.ratingContainer}>
               {[...Array(5)].map((_, i) => (
                 <MaterialCommunityIcons
@@ -122,8 +144,16 @@ export default function ListDetailScreen() {
               ))}
               <Text style={styles.ratingText}>{toDisplayRating(item.overallRating, ratingScale).toFixed(1)}</Text>
             </View>
-          )}
+          ) : null}
         </View>
+        <TouchableOpacity
+          onPress={() => handleRemovePlace(item)}
+          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          style={{ padding: 4, marginRight: 4 }}
+          accessibilityLabel={`Remove ${item.name} from list`}
+        >
+          <MaterialCommunityIcons name="close-circle-outline" size={20} color={theme.colors.textSecondary} />
+        </TouchableOpacity>
         <MaterialCommunityIcons name="chevron-right" size={20} color={theme.colors.textSecondary} />
       </TouchableOpacity>
     );
@@ -143,14 +173,14 @@ export default function ListDetailScreen() {
     <SafeAreaView style={styles.container} edges={['top']}>
       {/* Header */}
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => navigation.goBack()}>
+        <TouchableOpacity onPress={() => navigation.goBack()} accessibilityLabel="Back" accessibilityRole="button">
           <MaterialCommunityIcons name="arrow-left" size={24} color={theme.colors.text} />
         </TouchableOpacity>
         <TouchableOpacity style={styles.headerTitleContainer} onPress={handleRenamePress} activeOpacity={0.7}>
           <Text style={styles.headerTitle} numberOfLines={1}>{list.name}</Text>
           <MaterialCommunityIcons name="pencil-outline" size={16} color={theme.colors.textSecondary} style={styles.editIcon} />
         </TouchableOpacity>
-        <TouchableOpacity onPress={() => setShowShareModal(true)}>
+        <TouchableOpacity onPress={() => setShowShareModal(true)} accessibilityLabel="Share list" accessibilityRole="button">
           <MaterialCommunityIcons name="share-variant" size={24} color={theme.colors.primary} />
         </TouchableOpacity>
       </View>
@@ -158,18 +188,18 @@ export default function ListDetailScreen() {
       {/* List Info */}
       {(list.description || list.category || list.city) && (
         <View style={styles.listInfo}>
-          {list.description && <Text style={styles.description}>{list.description}</Text>}
+          {list.description ? <Text style={styles.description}>{list.description}</Text> : null}
           <View style={styles.metaContainer}>
-            {list.category && (
+            {list.category ? (
               <View style={styles.chip}>
                 <Text style={styles.chipText}>{list.category}</Text>
               </View>
-            )}
-            {list.city && (
+            ) : null}
+            {list.city ? (
               <View style={styles.chip}>
                 <Text style={styles.chipText}>{list.city}</Text>
               </View>
-            )}
+            ) : null}
           </View>
         </View>
       )}

@@ -4,16 +4,17 @@ import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
-import { View, ActivityIndicator, Platform, StyleSheet } from 'react-native';
+import { View, ActivityIndicator, Platform, StyleSheet, Text, TouchableOpacity } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { theme } from './lib/theme';
 import { initializeDatabase, getAuthor } from './lib/db';
 import { registerServiceWorker } from './lib/pwa';
+import { captureShareCodeFromUrl, listenForShareLinks } from './lib/sharing';
+import { navigationRef, openPendingShare } from './lib/navigation';
 import { RootStackParamList, MainTabParamList } from './types';
 
 // Screens
 import CreateAccountScreen from './screens/CreateAccountScreen';
-import LoginScreen from './screens/LoginScreen';
 import DashboardScreen from './screens/DashboardScreen';
 import ListsScreen from './screens/ListsScreen';
 import MapScreen from './screens/MapScreen';
@@ -25,6 +26,7 @@ import CategoryManagementScreen from './screens/CategoryManagementScreen';
 import TileProviderScreen from './screens/TileProviderScreen';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
+
 const Tab = createBottomTabNavigator<MainTabParamList>();
 
 function TabNavigator() {
@@ -98,7 +100,6 @@ function RootNavigator({ needsAccount }: { needsAccount: boolean }) {
       }}
       initialRouteName={initialRoute}
     >
-      <Stack.Screen name="Login" component={LoginScreen} />
       <Stack.Screen name="CreateAccount" component={CreateAccountScreen} />
       <Stack.Screen name="Main" component={TabNavigator} />
       <Stack.Screen name="ListDetail" component={ListDetailScreen} />
@@ -113,23 +114,44 @@ function RootNavigator({ needsAccount }: { needsAccount: boolean }) {
 export default function App() {
   const [isReady, setIsReady] = useState(false);
   const [needsAccount, setNeedsAccount] = useState(false);
+  const [initError, setInitError] = useState<string | null>(null);
+
+  const init = async () => {
+    setInitError(null);
+    try {
+      await initializeDatabase();
+      const author = await getAuthor();
+      setNeedsAccount(!author);
+      setIsReady(true);
+    } catch (error: unknown) {
+      console.error('Failed to initialize:', error);
+      setInitError(error instanceof Error ? error.message : String(error));
+    }
+  };
 
   useEffect(() => {
-    // Register service worker for PWA functionality
+    captureShareCodeFromUrl();
     registerServiceWorker();
-
-    (async () => {
-      try {
-        await initializeDatabase();
-        const author = await getAuthor();
-        setNeedsAccount(!author);
-        setIsReady(true);
-      } catch (error: unknown) {
-        console.error('Failed to initialize:', error);
-        setIsReady(true);
-      }
-    })();
+    init();
+    return listenForShareLinks(openPendingShare);
   }, []);
+
+  if (initError) {
+    return (
+      <View style={styles.centered}>
+        <Text style={styles.errorTitle}>Chowder couldn't open its database</Text>
+        <Text style={styles.errorText}>{initError}</Text>
+        <Text style={styles.errorText}>
+          {Platform.OS === 'web'
+            ? 'Private browsing or blocked site storage can cause this. Your data is not lost.'
+            : 'Try closing and reopening the app.'}
+        </Text>
+        <TouchableOpacity style={styles.retryButton} onPress={init}>
+          <Text style={styles.retryText}>Try again</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
 
   if (!isReady) {
     return (
@@ -142,7 +164,7 @@ export default function App() {
   return (
     <GestureHandlerRootView style={styles.root}>
       <SafeAreaProvider>
-        <NavigationContainer>
+        <NavigationContainer ref={navigationRef} onReady={() => { if (!needsAccount) openPendingShare(); }}>
           <RootNavigator needsAccount={needsAccount} />
         </NavigationContainer>
       </SafeAreaProvider>
@@ -153,6 +175,36 @@ export default function App() {
 const styles = StyleSheet.create({
   root: {
     flex: 1,
+  },
+  centered: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+    backgroundColor: theme.colors.background,
+  },
+  errorTitle: {
+    ...theme.typography.h3,
+    color: theme.colors.text,
+    textAlign: 'center',
+    marginBottom: 12,
+  },
+  errorText: {
+    ...theme.typography.bodySmall,
+    color: theme.colors.textSecondary,
+    textAlign: 'center',
+    marginBottom: 8,
+  },
+  retryButton: {
+    marginTop: 16,
+    backgroundColor: theme.colors.primary,
+    paddingVertical: 12,
+    paddingHorizontal: 24,
+    borderRadius: theme.borderRadius.md,
+  },
+  retryText: {
+    color: '#fff',
+    fontWeight: '600',
   },
 });
 

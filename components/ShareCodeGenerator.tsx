@@ -8,12 +8,14 @@ import {
   StyleSheet,
   Modal,
   Alert,
+  Platform,
+  Share,
 } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { theme } from '../lib/theme';
-import { generateShareCode, storeShareCode } from '../lib/sharing';
+import { generateShareCode, buildShareLink } from '../lib/sharing';
 import { SharePayload } from '../types';
-import { getAuthor, getList, getListItems, getAllPlaces } from '../lib/db';
+import { getAuthor, getList, getListItems, getAllPlaces, getAllCategories } from '../lib/db';
 import * as Clipboard from 'expo-clipboard';
 
 interface ShareCodeGeneratorProps {
@@ -38,8 +40,8 @@ export default function ShareCodeGenerator({ listId, onClose }: ShareCodeGenerat
         return;
       }
 
-      const items = await getListItems(listId);
-      const allPlaces = await getAllPlaces();
+      const [items, allPlaces, categories] = await Promise.all([getListItems(listId), getAllPlaces(), getAllCategories()]);
+      const categoryName = new Map(categories.map(c => [c.id, c.name]));
       const listPlaces = items
         .map(item => allPlaces.find(p => p.id === item.placeId))
         .filter((place): place is NonNullable<typeof place> => place !== undefined);
@@ -54,13 +56,16 @@ export default function ShareCodeGenerator({ listId, onClose }: ShareCodeGenerat
           address: place.address,
           lat: place.latitude,
           lng: place.longitude,
-          category: place.categoryId,
+          // Category ids are local to this device; send the name instead.
+          category: place.categoryId ? categoryName.get(place.categoryId) : undefined,
         })),
       };
 
-      const code = generateShareCode(payload);
-      storeShareCode(code, payload);
-      setShareCode(code);
+      if (payload.places.length === 0) {
+        Alert.alert('Empty list', 'Add some places to this list before sharing it.');
+        return;
+      }
+      setShareCode(generateShareCode(payload));
     } catch (error) {
       console.error('Failed to generate share code:', error);
       Alert.alert('Error', 'Failed to generate share code');
@@ -69,10 +74,32 @@ export default function ShareCodeGenerator({ listId, onClose }: ShareCodeGenerat
     }
   };
 
-  const handleCopy = async () => {
-    if (shareCode) {
-      await Clipboard.setStringAsync(shareCode);
-      Alert.alert('Copied!', 'Share code copied to clipboard');
+  const copy = async (text: string, what: string) => {
+    try {
+      await Clipboard.setStringAsync(text);
+      Alert.alert('Copied!', `${what} copied to clipboard.`);
+    } catch {
+      Alert.alert('Copy failed', 'Select the code above and copy it manually.');
+    }
+  };
+
+  const handleShare = async () => {
+    if (!shareCode) return;
+    const link = buildShareLink(shareCode);
+    const message = `Here's my Chowder list! Open this link, or paste the code in Chowder → Settings → Import a Friend's List:\n\n${link}`;
+    try {
+      if (Platform.OS === 'web') {
+        const nav: any = (globalThis as any).navigator;
+        if (nav?.share) {
+          await nav.share({ title: 'Chowder list', text: message });
+        } else {
+          await copy(link, 'Share link');
+        }
+      } else {
+        await Share.share({ message });
+      }
+    } catch {
+      // user cancelled the share sheet
     }
   };
 
@@ -121,14 +148,18 @@ export default function ShareCodeGenerator({ listId, onClose }: ShareCodeGenerat
               />
               <Text style={styles.successText}>Share Code Generated!</Text>
               <View style={styles.codeContainer}>
-                <Text style={styles.codeText} selectable>{shareCode}</Text>
+                <Text style={styles.codeText} selectable numberOfLines={4}>{shareCode}</Text>
               </View>
-              <TouchableOpacity style={styles.button} onPress={handleCopy}>
-                <MaterialCommunityIcons name="content-copy" size={20} color={theme.colors.background} />
-                <Text style={styles.buttonText}>Copy Code</Text>
+              <TouchableOpacity style={styles.button} onPress={handleShare}>
+                <MaterialCommunityIcons name="share-variant" size={20} color={theme.colors.background} />
+                <Text style={styles.buttonText}>Share</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={[styles.button, styles.secondaryButton]} onPress={() => copy(shareCode, 'Share code')}>
+                <MaterialCommunityIcons name="content-copy" size={20} color={theme.colors.primary} />
+                <Text style={[styles.buttonText, { color: theme.colors.primary }]}>Copy Code</Text>
               </TouchableOpacity>
               <Text style={styles.instructions}>
-                Share this code with others. They can import it from Settings → Import List via Share Code
+                Your friend can open the link, or paste the code in Settings → Import a Friend's List.
               </Text>
             </View>
           )}
@@ -185,6 +216,11 @@ const styles = StyleSheet.create({
   buttonDisabled: {
     backgroundColor: theme.colors.border,
   },
+  secondaryButton: {
+    backgroundColor: 'transparent',
+    borderWidth: 1,
+    borderColor: theme.colors.primary,
+  },
   buttonText: {
     ...theme.typography.body,
     color: theme.colors.background,
@@ -207,8 +243,8 @@ const styles = StyleSheet.create({
   codeText: {
     ...theme.typography.body,
     fontFamily: 'monospace',
+    fontSize: 12,
     color: theme.colors.text,
-    textAlign: 'center',
   },
   instructions: {
     ...theme.typography.caption,

@@ -12,13 +12,13 @@ import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../types';
 import { theme } from '../lib/theme';
-import { TILE_PROVIDERS, getTileProviderPreference, setTileProviderPreference, TileProvider } from '../lib/tileProviders';
+import { TILE_PROVIDERS, DEFAULT_TILE_PROVIDER, getTileProviderPreference, setTileProviderPreference, TileProvider } from '../lib/tileProviders';
 
 type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
 
 export default function TileProviderScreen() {
   const navigation = useNavigation<NavigationProp>();
-  const [selectedProvider, setSelectedProvider] = useState<string>('carto-positron');
+  const [selectedProvider, setSelectedProvider] = useState<string>(DEFAULT_TILE_PROVIDER);
 
   useEffect(() => {
     loadProvider();
@@ -51,7 +51,7 @@ export default function TileProviderScreen() {
 
       <ScrollView style={styles.content}>
         <Text style={styles.description}>
-          Choose a map style. All providers are free to use.
+          Choose a map style. All of these are free and need no account.
         </Text>
 
         {TILE_PROVIDERS.map((provider) => (

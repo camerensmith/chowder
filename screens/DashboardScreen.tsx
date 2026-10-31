@@ -123,9 +123,7 @@ export default function DashboardScreen() {
   const restaurantsAdded = places.filter(p => p.createdAt >= cutoff).length;
   const checkIns = visits.filter(v => v.createdAt >= cutoff).length;
 
-  const timeFilteredVisits = visits.filter(v => v.createdAt >= cutoff);
-  const timeFilteredVisitIds = new Set(timeFilteredVisits.map(v => v.id));
-  const timeFilteredDishes = dishes.filter(d => timeFilteredVisitIds.has(d.visitId));
+  const timeFilteredDishes = dishes.filter(d => d.createdAt >= cutoff);
   const { sum, count } = timeFilteredDishes.reduce(
     (acc, d) => ({ sum: acc.sum + d.rating, count: acc.count + 1 }),
     { sum: 0, count: 0 }
@@ -133,7 +131,7 @@ export default function DashboardScreen() {
   const avgScore = count > 0 ? sum / count : 0;
   const avgScoreDisplay = count > 0 ? toDisplayRating(avgScore, ratingScale).toFixed(1) : '—';
 
-  const listsCreated = lists.length;
+  const listsCreated = lists.filter(l => !l.importedFrom).length;
   const totalCheckIns = visits.length;
 
   const dishCounts = new Map<string, { count: number; lastDate: number }>();

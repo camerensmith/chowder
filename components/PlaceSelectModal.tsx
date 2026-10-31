@@ -7,6 +7,8 @@ import {
   Modal,
   FlatList,
   TextInput,
+  KeyboardAvoidingView,
+  Platform,
 } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Place } from '../types';
@@ -79,9 +81,9 @@ export default function PlaceSelectModal({ visible, listId, onClose, onSelect }:
       >
         <View style={styles.placeInfo}>
           <Text style={styles.placeName} numberOfLines={1}>{item.name}</Text>
-          {item.address && (
+          {item.address ? (
             <Text style={styles.placeAddress} numberOfLines={1}>{item.address}</Text>
-          )}
+          ) : null}
         </View>
         {isInList ? (
           <MaterialCommunityIcons name="check-circle" size={24} color={theme.colors.primary} />
@@ -94,7 +96,7 @@ export default function PlaceSelectModal({ visible, listId, onClose, onSelect }:
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <View style={styles.overlay}>
+      <KeyboardAvoidingView style={styles.overlay} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <View style={styles.modal}>
           <View style={styles.header}>
             <Text style={styles.title}>Add Place to List</Text>
@@ -130,7 +132,7 @@ export default function PlaceSelectModal({ visible, listId, onClose, onSelect }:
             }
           />
         </View>
-      </View>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }

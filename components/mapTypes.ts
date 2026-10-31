@@ -1,0 +1,27 @@
+import { Place } from '../types';
+
+export interface LatLng {
+  lat: number;
+  lng: number;
+}
+
+export interface MapViewProps {
+  places: Place[];
+  /** Pin tapped: show the info card for this place. */
+  onPlaceSelect?: (place: Place) => void;
+  /** Empty map area tapped. */
+  onMapClick?: (lat: number, lng: number) => void;
+  selectedPlaceId?: string;
+  /** Temporary pin awaiting confirmation. */
+  pendingPin?: { latitude: number; longitude: number } | null;
+  /** Where to start. If omitted the map fits all places (or a default city). */
+  initialCenter?: LatLng;
+  initialZoom?: number;
+  /** One-shot recenter request; MapView calls onCenterConsumed once handled. */
+  center?: LatLng;
+  zoom?: number;
+  onCenterConsumed?: () => void;
+}
+
+export const DEFAULT_CENTER: LatLng = { lat: 40.7128, lng: -74.006 }; // NYC
+export const DEFAULT_ZOOM = 13;

@@ -9,13 +9,15 @@ import {
   ScrollView,
   Alert,
   Image,
+  KeyboardAvoidingView,
+  Platform,
 } from 'react-native';
-import * as ImagePicker from 'expo-image-picker';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Dish, Category } from '../types';
 import { theme } from '../lib/theme';
 import { getCategoriesByType } from '../lib/db';
 import DraggableStarRating from './DraggableStarRating';
+import { pickImage } from '../lib/imageStorage';
 import { getRatingScalePreference, toDisplayRating, toInternalRating, RatingScale } from '../lib/ratingScale';
 
 interface DishEditModalProps {
@@ -68,64 +70,9 @@ export default function DishEditModal({ visible, dish, visitId, onSave, onClose 
     }
   };
 
-  const handlePickImage = async () => {
-    try {
-      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      if (status !== 'granted') {
-        Alert.alert('Permission needed', 'Please grant camera roll permissions to upload images');
-        return;
-      }
-
-      const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
-        allowsEditing: true,
-        aspect: [1, 1],
-        quality: 0.8,
-      });
-
-      if (!result.canceled && result.assets[0]) {
-        setImageUri(result.assets[0].uri);
-      }
-    } catch (error) {
-      console.error('Error picking image:', error);
-      Alert.alert('Error', 'Failed to pick image');
-    }
-  };
-
-  const handleTakePhoto = async () => {
-    try {
-      const { status } = await ImagePicker.requestCameraPermissionsAsync();
-      if (status !== 'granted') {
-        Alert.alert('Permission needed', 'Please grant camera permissions to take photos');
-        return;
-      }
-
-      const result = await ImagePicker.launchCameraAsync({
-        allowsEditing: true,
-        aspect: [1, 1],
-        quality: 0.8,
-      });
-
-      if (!result.canceled && result.assets[0]) {
-        setImageUri(result.assets[0].uri);
-      }
-    } catch (error) {
-      console.error('Error taking photo:', error);
-      Alert.alert('Error', 'Failed to take photo');
-    }
-  };
-
-  const handleImageSource = () => {
-    Alert.alert(
-      'Select Image',
-      'Choose an option',
-      [
-        { text: 'Camera', onPress: handleTakePhoto },
-        { text: 'Photo Library', onPress: handlePickImage },
-        { text: 'Cancel', style: 'cancel' },
-      ],
-      { cancelable: true }
-    );
+  const handleImageSource = async () => {
+    const uri = await pickImage({ aspect: [1, 1] });
+    if (uri) setImageUri(uri);
   };
 
   const handleRemoveImage = () => {
@@ -137,8 +84,8 @@ export default function DishEditModal({ visible, dish, visitId, onSave, onClose 
       Alert.alert('Error', 'Dish name is required');
       return;
     }
-    if (rating === 0) {
-      Alert.alert('Error', 'Please provide a rating');
+    if (rating <= 0) {
+      Alert.alert('Rating required', 'Tap or drag the stars to rate this dish.');
       return;
     }
     onSave({
@@ -155,7 +102,7 @@ export default function DishEditModal({ visible, dish, visitId, onSave, onClose 
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <View style={styles.overlay}>
+      <KeyboardAvoidingView style={styles.overlay} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <View style={styles.modal}>
           <View style={styles.header}>
             <Text style={styles.title}>{dish ? 'Edit Dish' : 'Add Dish'}</Text>
@@ -164,7 +111,7 @@ export default function DishEditModal({ visible, dish, visitId, onSave, onClose 
             </TouchableOpacity>
           </View>
 
-          <ScrollView style={styles.content}>
+          <ScrollView keyboardShouldPersistTaps="handled" style={styles.content}>
             {/* Name */}
             <View style={styles.field}>
               <Text style={styles.label}>Dish Name</Text>
@@ -191,7 +138,7 @@ export default function DishEditModal({ visible, dish, visitId, onSave, onClose 
               </TouchableOpacity>
               {showCategoryPicker && (
                 <View style={styles.categoryList}>
-                  <ScrollView nestedScrollEnabled={true}>
+                  <ScrollView keyboardShouldPersistTaps="handled" nestedScrollEnabled={true}>
                     <TouchableOpacity
                       style={styles.categoryOption}
                       onPress={() => {
@@ -284,7 +231,7 @@ export default function DishEditModal({ visible, dish, visitId, onSave, onClose 
             </TouchableOpacity>
           </View>
         </View>
-      </View>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }

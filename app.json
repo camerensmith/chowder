@@ -26,10 +26,7 @@
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#ffffff"
       },
-      "package": "com.chowder.app",
-      "permissions": [
-        "android.permission.RECORD_AUDIO"
-      ]
+      "package": "com.chowder.app"
     },
     "web": {
       "favicon": "./assets/appicon.png",
@@ -48,21 +45,24 @@
     "scheme": "chowder",
     "plugins": [
       "expo-sqlite",
-      "expo-file-system",
       [
         "expo-image-picker",
         {
-          "photosPermission": "The app accesses your photos to let you set a profile picture."
+          "photosPermission": "Chowder uses your photos for place, dish and profile pictures.",
+          "cameraPermission": "Chowder uses the camera to take photos of places and dishes."
+        }
+      ],
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "Chowder uses your location to center the map near you."
         }
       ]
     ],
     "extra": {
       "eas": {
         "projectId": "3e73e6e3-1406-4770-a741-8e77acfc912e"
-      },
-      "cloudflareAccountId": "",
-      "cloudflareAccountHash": "",
-      "cloudflareImagesToken": ""
+      }
     }
   }
 }

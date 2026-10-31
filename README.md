@@ -4,12 +4,12 @@ A personal food and restaurant tracking app with a map-centric UI. Track your fa
 
 ## Features
 
-- **Local-Only Data**: All data stored locally using SQLite (native) or localStorage (web)
+- **Local-Only Data**: All data stored locally using SQLite (native) or IndexedDB (web)
 - **Lists**: Organize restaurants and dishes into custom lists
 - **Map View**: See all your places on an interactive map (Leaflet on web)
 - **Ratings**: Rate places and dishes with 1-5 star ratings
-- **Share Codes**: Share lists via client-side generated codes (no backend required)
-- **Offline-First**: Works fully offline after initial setup
+- **Share Codes**: Share lists via self-contained codes or links (no backend required)
+- **Offline-First**: Your data works offline; map tiles and place search need a connection
 - **Place Search**: Search for restaurants using Nominatim (OpenStreetMap)
 - **Visit Tracking**: Record visits to places with notes and photos
 - **Dish Tracking**: Track individual dishes eaten at each place
@@ -29,87 +29,58 @@ A personal food and restaurant tracking app with a map-centric UI. Track your fa
 npm install
 ```
 
-2. (Optional) Configure backend API URL:
-   - Create a `.env` file in the root directory
-   - Add: `EXPO_PUBLIC_API_URL=https://your-api-url.com`
-   - If not set, the app will work in offline mode (no backend required)
-
-3. Start the development server:
+2. Start the development server:
 ```bash
 npm start
 ```
 
-4. Open the app:
+3. Open the app:
    - Press `w` to open in web browser
    - Press `a` to open in Android emulator
    - Press `i` to open in iOS simulator
    - Scan QR code with Expo Go app on your device
 
-### Backend Configuration
+### Checks
 
-The app works in two modes:
-
-**Offline Mode (Default):**
-- No backend server required
-- All data stored locally
-- Sign up/sign in works without API
-- Perfect for personal use
-
-**Backend Mode:**
-- Set `EXPO_PUBLIC_API_URL` environment variable
-- Backend should provide:
-  - `POST /api/auth/signup` - User registration
-  - `POST /api/auth/login` - User authentication
-  - `GET /api/health` - Health check endpoint
-  - `POST /api/email/welcome` - Welcome email (optional)
-  - JWT token-based authentication
-
-**📧 Email Functionality:**
-- Email sending (e.g., welcome emails) is implemented in the frontend but requires a backend server
-- The frontend calls `POST /api/email/welcome` with `{ email, displayName }` when a user signs up
-- Backend must implement this endpoint with email service integration (SendGrid, AWS SES, etc.)
-- If the backend is unavailable or email sending fails, user signup still succeeds (offline-first design)
-- When email is successfully sent, users receive a confirmation message
-
-**📚 For detailed backend setup instructions, see [BACKEND_SETUP.md](./BACKEND_SETUP.md)**
-
-**Backend Email Endpoint Requirements:**
+```bash
+npm run typecheck   # TypeScript (also runs in the deploy workflow)
+npm run build:web   # Production web build into dist/, paths fixed for GitHub Pages (/chowder)
 ```
-POST /api/email/welcome
-Body: { email: string, displayName: string }
-Response: 200 OK (or appropriate status code)
 
-Example response:
-{
-  "success": true,
-  "message": "Welcome email sent"
-}
-```
+### How data works
+
+There is no server and no account. Your name/avatar is just a local profile used
+as the author on lists you share. Everything else lives on the device
+(SQLite on iOS/Android, IndexedDB on web), so **Settings → Backup Data** is the
+only copy outside the device — use it, and **Restore** to move to a new phone.
+
+Share codes (`chowder1:…`) contain the whole list, so they import on any device.
+On web, the share link (`…/chowder/#share=…`) opens straight into the import screen.
 
 ## Project Structure
 
 ```
 chowder/
-├── App.tsx                 # Root component and navigation
+├── App.tsx                 # Root component, navigation, startup error screen
+├── index.ts                # Entry; installs the web Alert implementation
 ├── screens/                # Screen components
-│   ├── CreateAccountScreen.tsx
-│   ├── ListsScreen.tsx
-│   ├── MapScreen.tsx
-│   ├── ListDetailScreen.tsx
-│   ├── PlaceDetailScreen.tsx
-│   ├── SettingsScreen.tsx
-│   └── ShareViewerScreen.tsx
-├── components/             # Reusable components
-│   ├── MapView.tsx
-│   ├── PlaceSearchModal.tsx
-│   └── ShareCodeGenerator.tsx
-├── lib/                    # Utilities and services
-│   ├── db.ts              # Database operations
-│   ├── theme.ts           # Design system
-│   ├── maps.ts            # Map/search utilities
-│   └── sharing.ts         # Share code generation
-└── types/                  # TypeScript types
-    └── index.ts
+├── components/
+│   ├── MapView.tsx         # Native map (react-native-maps)
+│   ├── MapView.web.tsx     # Web map (Leaflet)
+│   ├── BottomSheet.tsx     # Shared modal sheet (keyboard-safe)
+│   └── ...
+├── lib/
+│   ├── db.ts               # All data access (SQLite native / IndexedDB web)
+│   ├── rating.ts           # The one place a place's rating is computed
+│   ├── dialogs.ts          # Alert.alert for web (react-native-web's is a no-op)
+│   ├── imageStorage.ts     # pickImage() + persisting photos
+│   ├── backup.ts           # Backup/restore to a JSON file
+│   ├── sharing.ts          # Share codes and links
+│   ├── storage.ts          # Preferences (localStorage / AsyncStorage)
+│   ├── tileProviders.ts    # Web map tile styles
+│   └── pwa.ts              # Service worker registration
+├── public/sw.js            # Service worker (build id stamped by fix-paths.js)
+└── types/
 ```
 
 ## Core Principles
@@ -117,13 +88,13 @@ chowder/
 - **Local Ownership**: All data belongs to the device owner
 - **Author, Not Account**: Profile exists only to name the author of shared recommendations
 - **Sharing Is Copy-Only**: Sharing produces a snapshot, importing creates a new list
-- **Offline-First**: App works fully offline after initial setup
+- **Offline-First**: Your data works offline; map tiles and place search need a connection
 
 ## Tech Stack
 
 - React Native
 - Expo
-- SQLite (expo-sqlite)
+- SQLite (expo-sqlite) on native, IndexedDB on web
 - React Navigation
 - Leaflet (web map)
 - TypeScript
