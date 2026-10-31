@@ -20,6 +20,7 @@ import { createAuthor } from '../lib/db';
 import { pickImage } from '../lib/imageStorage';
 import { pickAndRestoreBackup } from '../lib/backup';
 import { openPendingShare } from '../lib/navigation';
+import { connectDropbox, getCloudState } from '../lib/cloud/sync';
 
 type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
 
@@ -109,6 +110,11 @@ export default function CreateAccountScreen() {
           <Text style={styles.buttonText}>{isSaving ? 'Saving…' : 'Get Started'}</Text>
         </TouchableOpacity>
 
+        {getCloudState().status !== 'unsupported' && getCloudState().configured ? (
+          <TouchableOpacity style={styles.linkButton} onPress={connectDropbox}>
+            <Text style={styles.linkText}>Restore from Dropbox</Text>
+          </TouchableOpacity>
+        ) : null}
         <TouchableOpacity style={styles.linkButton} onPress={handleRestore}>
           <Text style={styles.linkText}>Restore from a backup file</Text>
         </TouchableOpacity>

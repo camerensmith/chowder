@@ -10,6 +10,7 @@ import { theme } from './lib/theme';
 import { initializeDatabase, getAuthor } from './lib/db';
 import { registerServiceWorker } from './lib/pwa';
 import UpdateBanner from './components/UpdateBanner';
+import { initCloudSync } from './lib/cloud/sync';
 import { captureShareCodeFromUrl, listenForShareLinks } from './lib/sharing';
 import { navigationRef, openPendingShare } from './lib/navigation';
 import { RootStackParamList, MainTabParamList } from './types';
@@ -121,6 +122,8 @@ export default function App() {
     setInitError(null);
     try {
       await initializeDatabase();
+      // Finish a Dropbox sign-in if we're returning from one (may restore data on a new phone).
+      await initCloudSync();
       const author = await getAuthor();
       setNeedsAccount(!author);
       setIsReady(true);
