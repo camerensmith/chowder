@@ -7,20 +7,27 @@
 // - Everything else (map tiles, geocoding, other origins): not intercepted.
 //
 // BUILD_ID is replaced at deploy time by fix-paths.js so every deploy gets a
-// fresh cache and old ones are deleted.
+// fresh cache and old ones are deleted. Your data (IndexedDB) is separate from
+// these caches and is never touched by an update.
 
 const BUILD_ID = '__BUILD_ID__';
 const CACHE_NAME = `chowder-${BUILD_ID}`;
 const SCOPE = self.registration ? self.registration.scope : self.location.href.replace(/sw\.js$/, '');
 const SHELL_URL = new URL('./', SCOPE).href;
 
+// A new version installs in the background and then *waits*: the app shows an
+// "Update ready" prompt and sends SKIP_WAITING when the user taps Update, so a
+// new deploy never reloads the app in the middle of something.
 self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME)
       .then((cache) => cache.add(SHELL_URL))
       .catch(() => undefined)
-      .then(() => self.skipWaiting())
   );
+});
+
+self.addEventListener('message', (event) => {
+  if (event.data && event.data.type === 'SKIP_WAITING') self.skipWaiting();
 });
 
 self.addEventListener('activate', (event) => {

@@ -20,6 +20,8 @@ import { getAuthor, updateAuthor, getImportedFriendLists, deleteList } from '../
 import { Author, List } from '../types';
 import { exportBackupToFile, pickAndRestoreBackup } from '../lib/backup';
 import { pickImage } from '../lib/imageStorage';
+import { applyUpdate, checkForUpdates } from '../lib/pwa';
+import { useUpdateState } from '../components/UpdateBanner';
 import { getTileProviderPreference, getTileProvider } from '../lib/tileProviders';
 import { getRatingScalePreference, setRatingScalePreference, RatingScale } from '../lib/ratingScale';
 
@@ -29,6 +31,7 @@ export default function SettingsScreen() {
   const navigation = useNavigation<NavigationProp>();
   const [author, setAuthor] = useState<Author | null>(null);
   const [nameDraft, setNameDraft] = useState('');
+  const update = useUpdateState();
   const [tileProviderName, setTileProviderName] = useState<string>('OpenStreetMap');
   const [ratingScale, setRatingScale] = useState<RatingScale>(5);
   const [friendLists, setFriendLists] = useState<List[]>([]);
@@ -298,6 +301,49 @@ export default function SettingsScreen() {
           </TouchableOpacity>
         </View>
 
+        {/* App version + updates (web/PWA) */}
+        {update.status !== 'unsupported' ? (
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>App</Text>
+            <View style={styles.settingItem}>
+              <View style={styles.versionRow}>
+                <Text style={styles.settingLabel}>Version</Text>
+                <Text style={styles.settingValue}>
+                  {update.currentBuild}
+                  {update.currentBuiltAt ? ` · ${new Date(update.currentBuiltAt).toLocaleDateString()}` : ''}
+                </Text>
+              </View>
+              <Text style={styles.updateStatus}>
+                {update.status === 'checking' ? 'Checking for updates…'
+                  : update.status === 'up-to-date' ? '✓ You have the latest version'
+                  : update.status === 'available' ? `A new version (${update.latestBuild}) is ready`
+                  : update.status === 'updating' ? 'Updating…'
+                  : update.status === 'error' ? "Couldn't check for updates. Are you online?"
+                  : 'Updates install when you choose — your places, lists and photos are never affected.'}
+              </Text>
+              <TouchableOpacity
+                style={[styles.updateButton, update.status === 'available' && styles.updateButtonPrimary]}
+                onPress={update.status === 'available' ? applyUpdate : () => checkForUpdates()}
+                disabled={update.status === 'checking' || update.status === 'updating'}
+                activeOpacity={0.8}
+                accessibilityRole="button"
+              >
+                <MaterialCommunityIcons
+                  name={update.status === 'available' ? 'arrow-up-circle' : 'refresh'}
+                  size={18}
+                  color={update.status === 'available' ? '#fff' : theme.colors.primary}
+                />
+                <Text style={[styles.updateButtonText, update.status === 'available' && { color: '#fff' }]}>
+                  {update.status === 'available' ? 'Update Now'
+                    : update.status === 'checking' ? 'Checking…'
+                    : update.status === 'updating' ? 'Updating…'
+                    : 'Check for Updates'}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        ) : null}
+
         <Text style={styles.footerNote}>
           Chowder keeps all your data on this device. Use Back Up Data regularly — it's the only copy.
         </Text>
@@ -307,6 +353,35 @@ export default function SettingsScreen() {
 }
 
 const styles = StyleSheet.create({
+  versionRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  updateStatus: {
+    ...theme.typography.bodySmall,
+    color: theme.colors.textSecondary,
+    marginTop: theme.spacing.sm,
+  },
+  updateButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: theme.spacing.sm,
+    marginTop: theme.spacing.md,
+    paddingVertical: theme.spacing.sm + 2,
+    borderRadius: theme.borderRadius.md,
+    borderWidth: 1,
+    borderColor: theme.colors.primary,
+  },
+  updateButtonPrimary: {
+    backgroundColor: theme.colors.primary,
+  },
+  updateButtonText: {
+    ...theme.typography.body,
+    color: theme.colors.primary,
+    fontWeight: '600',
+  },
   avatar: {
     width: 56,
     height: 56,

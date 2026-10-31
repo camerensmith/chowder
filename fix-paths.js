@@ -31,13 +31,22 @@ const withBasePath = (pathname) => {
   return `${BASE_PATH}${normalizedPath}`;
 };
 
+// Build version, written to version.json AND into index.html (meta tag) so the
+// running app knows exactly which build it is and can compare with the latest
+// deployed version.json. (Not baked into the JS bundle: Metro caches inlined
+// env vars, which could make an updated app still report the old version.)
+const BUILD_ID = process.env.CHOWDER_BUILD_ID
+  || (process.env.GITHUB_SHA ? process.env.GITHUB_SHA.slice(0, 7) : String(Date.now()));
+const BUILD_TIME = process.env.CHOWDER_BUILD_TIME || new Date().toISOString();
+fs.writeFileSync(path.join(distDir, 'version.json'), JSON.stringify({ build: BUILD_ID, builtAt: BUILD_TIME }) + '\n', 'utf8');
+console.log(`✅ Wrote version.json (build ${BUILD_ID})`);
+
 // Copy service worker to dist directory, stamping a unique build id so each
 // deploy gets its own cache (otherwise users stay pinned to an old build).
 if (fs.existsSync(swSourcePath)) {
-  const buildId = process.env.GITHUB_SHA ? process.env.GITHUB_SHA.slice(0, 12) : String(Date.now());
-  const sw = fs.readFileSync(swSourcePath, 'utf8').replace(/__BUILD_ID__/g, buildId);
+  const sw = fs.readFileSync(swSourcePath, 'utf8').replace(/__BUILD_ID__/g, BUILD_ID);
   fs.writeFileSync(swDestPath, sw, 'utf8');
-  console.log(`✅ Wrote service worker (build ${buildId})`);
+  console.log(`✅ Wrote service worker (build ${BUILD_ID})`);
 } else {
   console.warn('⚠️  Service worker source not found at:', swSourcePath);
 }
@@ -87,6 +96,10 @@ if (html.includes('</head>')) {
   const faviconLinks = `\n    <link rel="icon" type="image/png" href="${faviconPath}" />\n    <link rel="apple-touch-icon" href="${appleTouchIconPath}" />`;
   html = html.replace('<head>', `<head>${faviconLinks}`);
 }
+
+// Stamp the build version into the page.
+html = html.replace(/<meta name="chowder-build"[^>]*>\s*/g, '');
+html = html.replace('</head>', `  <meta name="chowder-build" content="${BUILD_ID}" data-built-at="${BUILD_TIME}" />\n  </head>`);
 
 // Write the modified HTML back
 fs.writeFileSync(indexPath, html, 'utf8');
