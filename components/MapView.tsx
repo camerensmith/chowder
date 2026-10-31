@@ -23,6 +23,7 @@ export default function MapView({
   center,
   zoom,
   onCenterConsumed,
+  onViewChange,
 }: MapViewProps) {
   const mapRef = useRef<RNMapView>(null);
   const hasFitRef = useRef(!!initialCenter);
@@ -65,6 +66,7 @@ export default function MapView({
         style={StyleSheet.absoluteFill}
         initialRegion={initialRegion}
         showsUserLocation
+        onRegionChangeComplete={r => onViewChange?.({ latitude: r.latitude, longitude: r.longitude })}
         onPress={e => {
           // Marker taps also bubble a press on Android; ignore those.
           if ((e.nativeEvent as any).action === 'marker-press') return;

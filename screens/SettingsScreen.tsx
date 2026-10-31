@@ -151,9 +151,7 @@ export default function SettingsScreen() {
     <SafeAreaView style={styles.container} edges={['top']}>
       {/* Header */}
       <View style={styles.header}>
-        <TouchableOpacity onPress={loadAuthor}>
-          <MaterialCommunityIcons name="refresh" size={28} color={theme.colors.primary} />
-        </TouchableOpacity>
+        <View style={{ width: 44 }} />
         <View style={styles.logoContainer}>
           <Image source={require('../assets/centericon.png')} style={styles.logoImage} />
         </View>
@@ -234,15 +232,6 @@ export default function SettingsScreen() {
             </View>
           </TouchableOpacity>
 
-          <TouchableOpacity
-            style={styles.settingRow}
-            onPress={handleImportData}
-            activeOpacity={0.7}
-          >
-            <MaterialCommunityIcons name="upload" size={20} color={theme.colors.primary} />
-            <Text style={[styles.settingLabel, { marginLeft: theme.spacing.md }]}>Restore Data</Text>
-            <MaterialCommunityIcons name="chevron-right" size={20} color={theme.colors.textSecondary} />
-          </TouchableOpacity>
 
         </View>
 
@@ -287,20 +276,30 @@ export default function SettingsScreen() {
           ))}
         </View>
 
-        {/* Import/Export */}
+        {/* Your data */}
         <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Your Data</Text>
           <TouchableOpacity
-            style={[styles.exportButton, styles.settingRow]}
+            style={[styles.settingRow, styles.exportButton]}
             onPress={exportBackupToFile}
             activeOpacity={0.7}
           >
             <MaterialCommunityIcons name="download" size={20} color={theme.colors.background} />
-            <Text style={[styles.exportButtonText, { marginLeft: theme.spacing.md }]}>Backup Data</Text>
+            <Text style={[styles.exportButtonText, { marginLeft: theme.spacing.md }]}>Back Up Data</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.settingRow}
+            onPress={handleImportData}
+            activeOpacity={0.7}
+          >
+            <MaterialCommunityIcons name="upload" size={20} color={theme.colors.primary} />
+            <Text style={[styles.settingLabel, { marginLeft: theme.spacing.md }]}>Restore from Backup</Text>
+            <MaterialCommunityIcons name="chevron-right" size={20} color={theme.colors.textSecondary} />
           </TouchableOpacity>
         </View>
 
         <Text style={styles.footerNote}>
-          Chowder keeps all your data on this device. Use Backup Data regularly — it's the only copy.
+          Chowder keeps all your data on this device. Use Back Up Data regularly — it's the only copy.
         </Text>
       </ScrollView>
     </SafeAreaView>

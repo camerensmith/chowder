@@ -190,11 +190,6 @@ export default function CategoryManagementScreen() {
           categories.map((category, index) => (
             <View key={category.id} style={styles.categoryItem}>
               <View style={styles.categoryContent}>
-                <MaterialCommunityIcons
-                  name="drag"
-                  size={20}
-                  color={theme.colors.textSecondary}
-                />
                 <Text style={styles.categoryName}>{category.name}</Text>
               </View>
               <View style={styles.categoryActions}>

@@ -106,11 +106,9 @@ export default function PlaceInfoCard({ place, categoryName, imageUri, onPress, 
             {imageUri ? (
               <Image source={{ uri: imageUri }} style={styles.iconImage} resizeMode="cover" />
             ) : (
-              <Image
-                source={require('../assets/placeholder.png')}
-                style={styles.iconImage}
-                resizeMode="cover"
-              />
+              <View style={[styles.iconImage, { alignItems: 'center', justifyContent: 'center', backgroundColor: theme.colors.surface }]}>
+                <MaterialCommunityIcons name="silverware-fork-knife" size={22} color={theme.colors.textSecondary} />
+              </View>
             )}
           </View>
 
@@ -126,8 +124,8 @@ export default function PlaceInfoCard({ place, categoryName, imageUri, onPress, 
             
             {/* Metadata row (category + rating) */}
             <View style={styles.metadataRow}>
-              <Text style={styles.category}>{categoryName || 'Uncategorized'}</Text>
-              <View style={styles.metadataSpacer} />
+              {categoryName ? <Text style={styles.category}>{categoryName}</Text> : null}
+              {categoryName ? <View style={styles.metadataSpacer} /> : null}
               {renderStars(displayRating)}
             </View>
           </View>

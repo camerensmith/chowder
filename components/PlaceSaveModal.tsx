@@ -15,6 +15,8 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { theme } from '../lib/theme';
+import DraggableStarRating from './DraggableStarRating';
+import { getRatingScalePreference, toInternalRating, RatingScale } from '../lib/ratingScale';
 import { reverseGeocode } from '../lib/maps';
 import { getCategoriesByType } from '../lib/db';
 import { Category } from '../types';
@@ -24,7 +26,8 @@ interface PlaceSaveModalProps {
   latitude: number;
   longitude: number;
   onClose: () => void;
-  onSave: (name: string, address?: string, categoryId?: string, notes?: string) => void;
+  /** rating is on the internal 0–5 scale */
+  onSave: (name: string, address?: string, categoryId?: string, notes?: string, rating?: number) => void;
   initialName?: string;
   initialAddress?: string;
 }
@@ -37,9 +40,13 @@ export default function PlaceSaveModal({ visible, latitude, longitude, onClose, 
   const [notes, setNotes] = useState('');
   const [categories, setCategories] = useState<Category[]>([]);
   const [showCategoryPicker, setShowCategoryPicker] = useState(false);
+  const [rating, setRating] = useState(0); // display units
+  const [ratingScale, setRatingScale] = useState<RatingScale>(5);
 
   useEffect(() => {
     if (visible) {
+      setRating(0);
+      getRatingScalePreference().then(setRatingScale);
       setName(initialName || '');
       setAddress(initialAddress || null);
       setCategoryId(undefined);
@@ -76,10 +83,10 @@ export default function PlaceSaveModal({ visible, latitude, longitude, onClose, 
 
   const handleSave = () => {
     if (!name.trim()) {
-      Alert.alert('Error', 'Please enter a place name');
+      Alert.alert('Name required', 'Please enter a name for this place.');
       return;
     }
-    onSave(name.trim(), address || undefined, categoryId, notes.trim() || undefined);
+    onSave(name.trim(), address || undefined, categoryId, notes.trim() || undefined, rating > 0 ? toInternalRating(rating, ratingScale) : undefined);
     setName('');
     setAddress(null);
     setCategoryId(undefined);
@@ -183,6 +190,12 @@ export default function PlaceSaveModal({ visible, latitude, longitude, onClose, 
             )}
           </View>
 
+          {/* Rating (optional) — most places get saved right after a meal */}
+          <View style={styles.inputGroup}>
+            <Text style={styles.label}>Rating</Text>
+            <DraggableStarRating rating={rating} onRatingChange={setRating} maxRating={ratingScale} size={30} showValue />
+          </View>
+
           {/* Notes */}
           <View style={styles.inputGroup}>
             <Text style={styles.label}>Notes</Text>
@@ -197,12 +210,6 @@ export default function PlaceSaveModal({ visible, latitude, longitude, onClose, 
             />
           </View>
 
-          <View style={styles.coordsContainer}>
-            <MaterialCommunityIcons name="map-marker" size={16} color={theme.colors.textSecondary} />
-            <Text style={styles.coordsText}>
-              {latitude.toFixed(6)}, {longitude.toFixed(6)}
-            </Text>
-          </View>
         </ScrollView>
 
         {/* Footer */}

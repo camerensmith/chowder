@@ -196,3 +196,70 @@ export async function reverseGeocodeDetailed(latitude: number, longitude: number
     return null;
   }
 }
+
+// ===== Place search (Photon) =====
+// Photon (photon.komoot.io) is OpenStreetMap search built for type-ahead with a
+// location bias, so "pizza" finds pizza places near where you're looking —
+// Nominatim is address-oriented and often returned results in another state.
+
+export interface PlaceSearchResult {
+  id: string;
+  name: string;
+  address?: string;
+  latitude: number;
+  longitude: number;
+  /** 'place' = a specific business/POI you can save; 'area' = city, street, neighbourhood… */
+  kind: 'place' | 'area';
+  /** e.g. "restaurant", "cafe", "city" */
+  type?: string;
+}
+
+const AREA_KEYS = new Set(['place', 'boundary', 'highway', 'landuse', 'natural', 'waterway', 'railway']);
+
+export async function searchNearby(
+  query: string,
+  near?: { latitude: number; longitude: number },
+  signal?: AbortSignal
+): Promise<PlaceSearchResult[]> {
+  const url = new URL('https://photon.komoot.io/api/');
+  url.searchParams.set('q', query);
+  url.searchParams.set('limit', '12');
+  url.searchParams.set('lang', 'en');
+  if (near) {
+    url.searchParams.set('lat', near.latitude.toFixed(5));
+    url.searchParams.set('lon', near.longitude.toFixed(5));
+    url.searchParams.set('location_bias_scale', '0.5');
+  }
+  const response = await fetch(url.toString(), { signal });
+  if (!response.ok) throw new Error(`Search failed (${response.status})`);
+  const data = await response.json();
+  const seen = new Set<string>();
+  const results: PlaceSearchResult[] = [];
+  for (const f of data.features ?? []) {
+    const p = f.properties ?? {};
+    const [lng, lat] = f.geometry?.coordinates ?? [];
+    if (!p.name || typeof lat !== 'number') continue;
+    const street = [p.housenumber, p.street].filter(Boolean).join(' ');
+    const address = [street, p.city || p.district || p.county, street ? undefined : p.state].filter(Boolean).join(', ');
+    const key = `${p.name}|${lat.toFixed(4)}|${lng.toFixed(4)}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    results.push({
+      id: `${p.osm_type ?? ''}${p.osm_id ?? key}`,
+      name: p.name,
+      address: address || undefined,
+      latitude: lat,
+      longitude: lng,
+      kind: AREA_KEYS.has(p.osm_key) ? 'area' : 'place',
+      type: p.osm_value,
+    });
+  }
+  // Distance from the bias point keeps "nearest first" ordering when Photon's ranking ties.
+  if (near) {
+    const d = (r: PlaceSearchResult) => (r.latitude - near.latitude) ** 2 + ((r.longitude - near.longitude) * Math.cos((near.latitude * Math.PI) / 180)) ** 2;
+    const places = results.filter(r => r.kind === 'place').sort((a, b) => d(a) - d(b));
+    const areas = results.filter(r => r.kind === 'area');
+    return [...places, ...areas];
+  }
+  return results;
+}
