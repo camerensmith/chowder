@@ -225,6 +225,9 @@ function addressOf(t: Record<string, string>): string | undefined {
   return [street, t['addr:city']].filter(Boolean).join(', ') || undefined;
 }
 
+const cuisineCache = new Map<string, { at: number; results: PlaceSearchResult[] }>();
+const CACHE_MS = 10 * 60 * 1000;
+
 export async function searchByCuisine(
   query: string,
   near: { latitude: number; longitude: number },
@@ -233,11 +236,20 @@ export async function searchByCuisine(
 ): Promise<PlaceSearchResult[]> {
   const term = foodTerm(query);
   if (!term) return [];
+  // Same food word in roughly the same area (~1 km) within 10 min: reuse.
+  const cacheKey = `${term.cuisines.join(',')}|${(term.names ?? []).join(',')}|${near.latitude.toFixed(2)},${near.longitude.toFixed(2)}`;
+  const cached = cuisineCache.get(cacheKey);
+  if (cached && Date.now() - cached.at < CACHE_MS) return cached.results;
   const body = 'data=' + encodeURIComponent(buildOverpassQuery(term, near, radiusM));
   let lastError: unknown;
   for (const url of OVERPASS_ENDPOINTS) {
+    // Each server gets ~6 s; a slow one falls through to the next.
+    const c = typeof AbortController !== 'undefined' ? new AbortController() : undefined;
+    const onAbort = () => c?.abort();
+    signal?.addEventListener('abort', onAbort);
+    const timer = setTimeout(() => c?.abort(), 6000);
     try {
-      const res = await fetch(url, { method: 'POST', body, headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, signal });
+      const res = await fetch(url, { method: 'POST', body, headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, signal: c?.signal ?? signal });
       if (!res.ok) throw new Error(`Overpass ${res.status}`);
       const data = await res.json();
       const seen = new Set<string>();
@@ -261,10 +273,14 @@ export async function searchByCuisine(
           type: t.amenity || t.shop,
         });
       }
+      cuisineCache.set(cacheKey, { at: Date.now(), results: out });
       return out;
     } catch (e: any) {
-      if (e?.name === 'AbortError') throw e;
+      if (signal?.aborted) throw e; // the search changed; stop
       lastError = e;
+    } finally {
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', onAbort);
     }
   }
   throw lastError;
