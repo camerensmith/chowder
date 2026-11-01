@@ -132,6 +132,9 @@ export default function ListDetailScreen() {
           {item.address ? (
             <Text style={styles.placeAddress} numberOfLines={1}>{item.address}</Text>
           ) : null}
+          {item.visitCount ? (
+            <Text style={styles.placeAddress}>{item.visitCount} {item.visitCount === 1 ? 'visit' : 'visits'}</Text>
+          ) : null}
           {item.overallRating ? (
             <View style={styles.ratingContainer}>
               {[...Array(5)].map((_, i) => (

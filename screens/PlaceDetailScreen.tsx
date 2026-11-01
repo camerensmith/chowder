@@ -44,6 +44,7 @@ import DishEditModal from '../components/DishEditModal';
 import VisitEditModal from '../components/VisitEditModal';
 import TagManager from '../components/TagManager';
 import DraggableStarRating from '../components/DraggableStarRating';
+import GoogleRatingFootnote from '../components/GoogleRatingFootnote';
 import { getRatingScalePreference, toDisplayRating, toInternalRating, RatingScale } from '../lib/ratingScale';
 
 type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
@@ -505,6 +506,12 @@ export default function PlaceDetailScreen() {
                 ? 'Tap stars to change rating'
                 : 'Tap stars to rate'}
           </Text>
+          <Text style={styles.visitSummary}>
+            {visits.length === 0
+              ? 'Not visited yet'
+              : `Visited ${visits.length === 1 ? 'once' : `${visits.length} times`} · last ${new Date(Math.max(...visits.map(v => v.createdAt))).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: new Date(Math.max(...visits.map(v => v.createdAt))).getFullYear() === new Date().getFullYear() ? undefined : 'numeric' })}`}
+          </Text>
+          <GoogleRatingFootnote place={place} style={{ marginTop: 4 }} />
         </View>
 
         {/* Dishes */}
@@ -620,7 +627,7 @@ export default function PlaceDetailScreen() {
 
         {/* Visits */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Visits</Text>
+          <Text style={styles.sectionTitle}>Visits{visits.length ? ` (${visits.length})` : ''}</Text>
           {visits.length > 0 && (
             <>
               {visits.map(visit => (
@@ -816,6 +823,11 @@ const styles = StyleSheet.create({
     ...theme.typography.caption,
     color: theme.colors.primary,
     fontWeight: '600',
+  },
+  visitSummary: {
+    ...theme.typography.bodySmall,
+    color: theme.colors.text,
+    marginTop: theme.spacing.sm,
   },
   ratingSubtext: {
     ...theme.typography.caption,

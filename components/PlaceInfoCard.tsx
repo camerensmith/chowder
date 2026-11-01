@@ -1,6 +1,7 @@
 import React, { useEffect, useRef } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Image, Platform, Animated } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import GoogleRatingFootnote from './GoogleRatingFootnote';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Place } from '../types';
 import { theme } from '../lib/theme';
@@ -127,7 +128,13 @@ export default function PlaceInfoCard({ place, categoryName, imageUri, onPress, 
               {categoryName ? <Text style={styles.category}>{categoryName}</Text> : null}
               {categoryName ? <View style={styles.metadataSpacer} /> : null}
               {renderStars(displayRating)}
+              {place.visitCount ? (
+                <Text style={styles.visits}>
+                  {'  ·  '}{place.visitCount} {place.visitCount === 1 ? 'visit' : 'visits'}
+                </Text>
+              ) : null}
             </View>
+            <GoogleRatingFootnote place={place} style={{ marginTop: 2 }} />
           </View>
 
           {/* Right column: Action buttons + Chevron */}
@@ -163,6 +170,10 @@ export default function PlaceInfoCard({ place, categoryName, imageUri, onPress, 
 }
 
 const styles = StyleSheet.create({
+  visits: {
+    ...theme.typography.caption,
+    color: theme.colors.textSecondary,
+  },
   card: {
     position: 'absolute',
     left: 16,

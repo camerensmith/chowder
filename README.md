@@ -78,6 +78,20 @@ One-time Dropbox app setup (no server or secret needed — OAuth PKCE):
    in `lib/cloud/dropbox.ts` and deploy. Until then the app asks for the key
    once in Settings.
 
+### Google ratings footnote (optional)
+
+Settings → **Show Google ratings** (on by default) adds a small
+"Google ★ 4.6 · 2,341 reviews" line to places Google knows. It's looked up only
+when you open a place, accepted only if Google's match is within ~200 m with a
+matching name, and tapping it opens Google Maps. The Google place ID is
+remembered; ratings are kept for the session only.
+
+Setup: in Google Cloud, create a project with billing, enable **Places API (New)**,
+create an API key restricted to *Websites* `https://camerensmith.github.io/*`
+and to the Places API, then paste it in Settings (or set
+`GOOGLE_PLACES_KEY_DEFAULT` in `lib/googleRatings.ts`). Each lookup is a
+Places "Enterprise" request, billed after Google's monthly free allowance.
+
 Share codes (`chowder1:…`) contain the whole list, so they import on any device.
 On web, the share link (`…/chowder/#share=…`) opens straight into the import screen.
 
