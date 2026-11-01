@@ -21,6 +21,9 @@ export interface MapViewProps {
   center?: LatLng;
   zoom?: number;
   onCenterConsumed?: () => void;
+  /** Temporary search-result pins (not saved places). The map fits to them when they change. */
+  resultPins?: { id: string; name: string; latitude: number; longitude: number }[];
+  onResultPress?: (id: string) => void;
   /** Called after the user pans/zooms, with the new center. */
   onViewChange?: (center: { latitude: number; longitude: number }) => void;
 }

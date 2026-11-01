@@ -17,6 +17,9 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { theme } from '../lib/theme';
 import { searchNearby, PlaceSearchResult } from '../lib/maps';
+import { searchSaved, searchByCuisine, foodTerm, isFoodResult, fold, distanceSq, SavedSearchContext } from '../lib/foodSearch';
+import { searchGoogleText } from '../lib/googleRatings';
+import { getAllCategories, getAllDishes, getAllVisits, getAllTags } from '../lib/db';
 import { Place } from '../types';
 
 interface PlaceSearchModalProps {
@@ -29,9 +32,11 @@ interface PlaceSearchModalProps {
   savedPlaces: Place[];
   /** Bias web results to this point (the map's current center). */
   near?: { latitude: number; longitude: number };
+  /** Show every new-place result as pins on the map. */
+  onShowAll?: (query: string, results: PlaceSearchResult[]) => void;
 }
 
-type Row = { type: 'saved'; place: Place } | { type: 'web'; result: PlaceSearchResult };
+type Row = { type: 'saved'; place: Place; reason?: string } | { type: 'web'; result: PlaceSearchResult };
 
 function iconForType(type?: string): any {
   switch (type) {
@@ -45,18 +50,36 @@ function iconForType(type?: string): any {
   }
 }
 
-export default function PlaceSearchModal({ visible, onClose, onSelect, onSelectSaved, savedPlaces, near }: PlaceSearchModalProps) {
+export default function PlaceSearchModal({ visible, onClose, onSelect, onSelectSaved, savedPlaces, near, onShowAll }: PlaceSearchModalProps) {
   const [query, setQuery] = useState('');
   const [webResults, setWebResults] = useState<PlaceSearchResult[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const requestRef = useRef(0);
   const nearRef = useRef(near);
+  const [ctx, setCtx] = useState<SavedSearchContext | null>(null);
 
-  // Freeze the bias point when the sheet opens.
+  // Freeze the bias point when the sheet opens, and load what saved-place search needs.
   useEffect(() => {
     if (visible) {
       nearRef.current = near;
+      Promise.all([getAllCategories(), getAllDishes(), getAllVisits(), getAllTags()]).then(([cats, dishes, visits, tags]) => {
+        const catName = new Map(cats.map(c => [c.id, c.name]));
+        const placeOfVisit = new Map(visits.map(v => [v.id, v.placeId]));
+        const dishesByPlace = new Map<string, { name: string; categoryName?: string }[]>();
+        for (const d of dishes) {
+          const pid = placeOfVisit.get(d.visitId);
+          if (!pid) continue;
+          if (!dishesByPlace.has(pid)) dishesByPlace.set(pid, []);
+          dishesByPlace.get(pid)!.push({ name: d.name, categoryName: d.categoryId ? catName.get(d.categoryId) : undefined });
+        }
+        const tagName = new Map(tags.map(t => [t.id, t.name]));
+        setCtx({
+          categoryName: id => (id ? catName.get(id) : undefined),
+          dishesFor: pid => dishesByPlace.get(pid) ?? [],
+          tagNames: ids => (ids ?? []).map(i => tagName.get(i)).filter((n): n is string => !!n),
+        });
+      }).catch(() => setCtx(null));
     } else {
       setQuery('');
       setWebResults([]);
@@ -76,11 +99,31 @@ export default function PlaceSearchModal({ visible, onClose, onSelect, onSelectS
     setIsLoading(true);
     const timer = setTimeout(async () => {
       try {
-        const results = await searchNearby(q, nearRef.current, controller?.signal);
-        if (id === requestRef.current) {
-          setWebResults(results);
-          setError(null);
+        const where = nearRef.current;
+        const food = !!foodTerm(q);
+        // Ask every source at once; any of them failing is fine.
+        const settled = await Promise.allSettled([
+          searchNearby(q, where, controller?.signal),
+          food && where ? searchByCuisine(q, where, controller?.signal) : Promise.resolve([]),
+          where ? searchGoogleText(q, where, controller?.signal) : Promise.resolve([]),
+        ]);
+        if (id !== requestRef.current) return;
+        const [photon, cuisine, google] = settled.map(r => (r.status === 'fulfilled' ? r.value : []));
+        if (settled.every(r => r.status === 'rejected')) throw settled[0].status === 'rejected' ? settled[0].reason : new Error('search failed');
+        // For food words, drop non-food name matches ("Phoenix", "Phone Store").
+        const named = food ? photon.filter(isFoodResult) : photon;
+        const merged: PlaceSearchResult[] = [];
+        for (const r of [...google, ...cuisine, ...named]) {
+          const dupe = merged.some(m => fold(m.name) === fold(r.name) && Math.abs(m.latitude - r.latitude) < 0.001 && Math.abs(m.longitude - r.longitude) < 0.001);
+          if (!dupe) merged.push(r);
         }
+        if (where) {
+          const places = merged.filter(r => r.kind === 'place').sort((a, b) => distanceSq(a, where) - distanceSq(b, where));
+          setWebResults([...places, ...merged.filter(r => r.kind === 'area')].slice(0, 40));
+        } else {
+          setWebResults(merged.slice(0, 40));
+        }
+        setError(null);
       } catch (e: any) {
         if (id === requestRef.current && e?.name !== 'AbortError') {
           setError('Couldn’t search right now. Check your connection.');
@@ -96,12 +139,10 @@ export default function PlaceSearchModal({ visible, onClose, onSelect, onSelectS
   }, [query]);
 
   const savedMatches = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) return [];
-    return savedPlaces
-      .filter(p => [p.name, p.address, p.notes].some(f => f?.toLowerCase().includes(q)))
-      .slice(0, 8);
-  }, [query, savedPlaces]);
+    if (!query.trim()) return [];
+    const context: SavedSearchContext = ctx ?? { categoryName: () => undefined, dishesFor: () => [], tagNames: () => [] };
+    return searchSaved(query, savedPlaces, context);
+  }, [query, savedPlaces, ctx]);
 
   // Hide web results that are already saved.
   const newResults = useMemo(() => {
@@ -112,7 +153,7 @@ export default function PlaceSearchModal({ visible, onClose, onSelect, onSelectS
   }, [webResults, savedPlaces]);
 
   const sections = [
-    ...(savedMatches.length ? [{ title: 'Your places', data: savedMatches.map(place => ({ type: 'saved', place }) as Row) }] : []),
+    ...(savedMatches.length ? [{ title: 'Your places', data: savedMatches.map(m => ({ type: 'saved', place: m.place, reason: m.reason }) as Row) }] : []),
     ...(newResults.length ? [{ title: near ? 'Nearby' : 'Places', data: newResults.map(result => ({ type: 'web', result }) as Row) }] : []),
   ];
 
@@ -126,7 +167,11 @@ export default function PlaceSearchModal({ visible, onClose, onSelect, onSelectS
           </View>
           <View style={styles.resultInfo}>
             <Text style={styles.resultName} numberOfLines={1}>{p.name}</Text>
-            {p.address ? <Text style={styles.resultAddress} numberOfLines={1}>{p.address}</Text> : null}
+            {item.reason ? (
+              <Text style={styles.resultReason} numberOfLines={1}>{item.reason}</Text>
+            ) : p.address ? (
+              <Text style={styles.resultAddress} numberOfLines={1}>{p.address}</Text>
+            ) : null}
           </View>
           <MaterialCommunityIcons name="chevron-right" size={20} color={theme.colors.textSecondary} />
         </TouchableOpacity>
@@ -192,7 +237,21 @@ export default function PlaceSearchModal({ visible, onClose, onSelect, onSelectS
             sections={sections}
             keyExtractor={(item) => (item.type === 'saved' ? `s-${item.place.id}` : `w-${item.result.id}`)}
             renderItem={renderRow}
-            renderSectionHeader={({ section }) => <Text style={styles.sectionHeader}>{section.title}</Text>}
+            renderSectionHeader={({ section }) => (
+              <View style={styles.sectionHeaderRow}>
+                <Text style={styles.sectionHeader}>{section.title}</Text>
+                {section.title !== 'Your places' && onShowAll && newResults.filter(r => r.kind === 'place').length >= 2 ? (
+                  <TouchableOpacity
+                    onPress={() => onShowAll(query.trim(), newResults.filter(r => r.kind === 'place'))}
+                    style={styles.showAll}
+                    accessibilityRole="button"
+                  >
+                    <MaterialCommunityIcons name="map-marker-multiple" size={16} color={theme.colors.primary} />
+                    <Text style={styles.showAllText}>Show all on map</Text>
+                  </TouchableOpacity>
+                ) : null}
+              </View>
+            )}
             keyboardShouldPersistTaps="handled"
             stickySectionHeadersEnabled={false}
           />
@@ -239,6 +298,28 @@ const styles = StyleSheet.create({
   cancelText: {
     ...theme.typography.body,
     color: theme.colors.primary,
+  },
+  sectionHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    justifyContent: 'space-between',
+    paddingRight: theme.spacing.lg,
+  },
+  showAll: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingBottom: theme.spacing.sm,
+  },
+  showAllText: {
+    ...theme.typography.bodySmall,
+    color: theme.colors.primary,
+    fontWeight: '600',
+  },
+  resultReason: {
+    ...theme.typography.bodySmall,
+    color: theme.colors.primary,
+    marginTop: 2,
   },
   sectionHeader: {
     ...theme.typography.bodySmall,

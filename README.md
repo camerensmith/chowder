@@ -78,6 +78,22 @@ One-time Dropbox app setup (no server or secret needed — OAuth PKCE):
    in `lib/cloud/dropbox.ts` and deploy. Until then the app asks for the key
    once in Settings.
 
+### Map search
+
+The map search is fuzzy and food-aware:
+
+- **Your places** match on name, category, dishes, tags, notes and address,
+  ignoring accents (phở = pho) and small typos ("raman" → ramen). Results say
+  why they matched (e.g. "Dish: Pho tai").
+- **Nearby** combines Photon name search, an OpenStreetMap cuisine search via
+  Overpass for food words (so "pho" finds Vietnamese restaurants without "pho"
+  in the name), and Google text search if a Places key is set. Non-food matches
+  are dropped for food words; duplicates are merged; nearest first.
+- **Show all on map** drops every result as a pin with a "“pho” · 12 places ✕"
+  chip; tap a result pin to save it.
+
+Food words and their cuisines live in `lib/foodSearch.ts` (`FOOD_TERMS`).
+
 ### Google ratings footnote (optional)
 
 Settings → **Show Google ratings** (on by default) adds a small

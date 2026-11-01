@@ -86,6 +86,8 @@ export default function MapScreen() {
 
   // Friend lists panel state
   const mapCenterRef = useRef<{ latitude: number; longitude: number } | undefined>(undefined);
+  // "Show all on map" results for a search like "pho".
+  const [searchResults, setSearchResults] = useState<{ query: string; results: PlaceSearchResult[] } | null>(null);
   
   // Calculate recenter button position
   const tabBarHeight = 80;
@@ -255,6 +257,27 @@ export default function MapScreen() {
     }
   };
 
+  const handleShowAllResults = (query: string, results: PlaceSearchResult[]) => {
+    setShowSearchModal(false);
+    setSelectedPlace(null);
+    setPendingPin(null);
+    setSearchResults({ query, results });
+  };
+
+  const handleResultPinPress = (id: string) => {
+    const r = searchResults?.results.find(x => x.id === id);
+    if (!r) return;
+    setSelectedPlace(null);
+    setPendingPin({ latitude: r.latitude, longitude: r.longitude });
+    setPendingAddress(r.address);
+    setPendingRecommendedName(r.name);
+  };
+
+  // Hide result pins for places you've since saved.
+  const visibleResultPins = (searchResults?.results ?? []).filter(r =>
+    !allPlaces.some(p => p.name.trim().toLowerCase() === r.name.trim().toLowerCase() && Math.abs(p.latitude - r.latitude) < 0.0005 && Math.abs(p.longitude - r.longitude) < 0.0005)
+  );
+
   const handleSelectSaved = (place: Place) => {
     setShowSearchModal(false);
     setPendingPin(null);
@@ -419,6 +442,25 @@ export default function MapScreen() {
         </TouchableOpacity>
       </View>
 
+      {/* Active search results chip */}
+      {searchResults ? (
+        <View style={styles.resultsChipRow}>
+          <View style={styles.resultsChip}>
+            <MaterialCommunityIcons name="magnify" size={16} color={theme.colors.primary} />
+            <Text style={styles.resultsChipText} numberOfLines={1}>
+              “{searchResults.query}” · {visibleResultPins.length} {visibleResultPins.length === 1 ? 'place' : 'places'}
+            </Text>
+            <TouchableOpacity
+              onPress={() => { setSearchResults(null); setPendingPin(null); }}
+              accessibilityLabel="Clear search results"
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            >
+              <MaterialCommunityIcons name="close-circle" size={18} color={theme.colors.textSecondary} />
+            </TouchableOpacity>
+          </View>
+        </View>
+      ) : null}
+
       {/* Map */}
       <View style={styles.mapContainer}>
         <MapView
@@ -430,6 +472,8 @@ export default function MapScreen() {
           center={recenterTarget ?? undefined}
           onCenterConsumed={() => setRecenterTarget(null)}
           onViewChange={c => { mapCenterRef.current = c; }}
+          resultPins={visibleResultPins.length ? visibleResultPins : undefined}
+          onResultPress={handleResultPinPress}
         />
         {/* Pending-pin banner */}
         {pendingPin && (
@@ -487,6 +531,7 @@ export default function MapScreen() {
         onSelectSaved={handleSelectSaved}
         savedPlaces={allPlaces}
         near={mapCenterRef.current ?? userLocation ?? undefined}
+        onShowAll={handleShowAllResults}
       />
 
       {/* Place Save Modal (for map clicks) */}
@@ -529,6 +574,31 @@ export default function MapScreen() {
 }
 
 const styles = StyleSheet.create({
+  resultsChipRow: {
+    paddingHorizontal: theme.spacing.md,
+    paddingVertical: 6,
+    backgroundColor: theme.colors.surface,
+    borderBottomWidth: 1,
+    borderBottomColor: theme.colors.border,
+  },
+  resultsChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    gap: 6,
+    backgroundColor: theme.colors.primary + '15',
+    borderRadius: 999,
+    paddingVertical: 5,
+    paddingLeft: 10,
+    paddingRight: 8,
+    maxWidth: '100%',
+  },
+  resultsChipText: {
+    ...theme.typography.bodySmall,
+    color: theme.colors.text,
+    fontWeight: '600',
+    flexShrink: 1,
+  },
   searchTap: {
     flex: 1,
     flexDirection: 'row',
