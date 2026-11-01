@@ -37,6 +37,7 @@ import {
   deleteDish,
   getCategory,
   updateVisit,
+  isCheckIn,
 } from '../lib/db';
 import { Place, List, Visit, Dish, Category } from '../types';
 import PlaceEditModal from '../components/PlaceEditModal';
@@ -189,10 +190,11 @@ export default function PlaceDetailScreen() {
         // Update existing dish
         await updateDish(editingDish.id, dishData);
       } else {
-        // Attach to today's visit if there is one; otherwise this dish starts a new visit.
+        // Attach to today's entry if there is one. Otherwise make a hidden holder
+        // that does NOT count as a check-in — logging a dish isn't checking in.
         const today = new Date().toDateString();
         const todaysVisit = visits.find(v => new Date(v.createdAt).toDateString() === today);
-        const visitIdToUse = todaysVisit ? todaysVisit.id : (await createVisit(placeId)).id;
+        const visitIdToUse = todaysVisit ? todaysVisit.id : (await createVisit(placeId, undefined, undefined, false)).id;
         await createDish(visitIdToUse, dishData.name, dishData.rating, dishData.categoryId, dishData.notes, dishData.photoUri);
       }
       await loadPlace();
@@ -276,7 +278,9 @@ export default function PlaceDetailScreen() {
     );
   };
 
-  const checkedInToday = visits.some(v => new Date(v.createdAt).toDateString() === new Date().toDateString());
+  // Only real check-ins count as visits; dish-only holders are hidden.
+  const checkIns = visits.filter(isCheckIn);
+  const checkedInToday = checkIns.some(v => new Date(v.createdAt).toDateString() === new Date().toDateString());
 
   const openDirections = () => {
     if (!place) return;
@@ -290,9 +294,13 @@ export default function PlaceDetailScreen() {
   };
 
   const handleCheckIn = async () => {
-    if (checkedInToday) return; // one visit per day; dishes added today attach to it
+    if (checkedInToday) return; // one check-in per day
     try {
-      await createVisit(placeId);
+      // If you already logged dishes today, turn that entry into the check-in.
+      const today = new Date().toDateString();
+      const dishHolder = visits.find(v => !isCheckIn(v) && new Date(v.createdAt).toDateString() === today);
+      if (dishHolder) await updateVisit(dishHolder.id, { checkIn: true });
+      else await createVisit(placeId);
       await loadPlace();
     } catch (error) {
       console.error('Failed to check in:', error);
@@ -507,9 +515,9 @@ export default function PlaceDetailScreen() {
                 : 'Tap stars to rate'}
           </Text>
           <Text style={styles.visitSummary}>
-            {visits.length === 0
+            {checkIns.length === 0
               ? 'Not visited yet'
-              : `Visited ${visits.length === 1 ? 'once' : `${visits.length} times`} · last ${new Date(Math.max(...visits.map(v => v.createdAt))).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: new Date(Math.max(...visits.map(v => v.createdAt))).getFullYear() === new Date().getFullYear() ? undefined : 'numeric' })}`}
+              : `Visited ${checkIns.length === 1 ? 'once' : `${checkIns.length} times`} · last ${new Date(Math.max(...checkIns.map(v => v.createdAt))).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: new Date(Math.max(...checkIns.map(v => v.createdAt))).getFullYear() === new Date().getFullYear() ? undefined : 'numeric' })}`}
           </Text>
           <GoogleRatingFootnote place={place} style={{ marginTop: 4 }} />
         </View>
@@ -627,10 +635,10 @@ export default function PlaceDetailScreen() {
 
         {/* Visits */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Visits{visits.length ? ` (${visits.length})` : ''}</Text>
-          {visits.length > 0 && (
+          <Text style={styles.sectionTitle}>Visits{checkIns.length ? ` (${checkIns.length})` : ''}</Text>
+          {checkIns.length > 0 && (
             <>
-              {visits.map(visit => (
+              {checkIns.map(visit => (
                 <TouchableOpacity
                   key={visit.id}
                   style={styles.visitCard}

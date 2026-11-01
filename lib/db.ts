@@ -44,6 +44,7 @@ function fromRow<T>(row: any): T {
   for (const key of Object.keys(row)) {
     out[key] = row[key] === null ? undefined : row[key];
   }
+  if (typeof out.checkIn === 'number') out.checkIn = out.checkIn === 1;
   if ('orderIndex' in out) {
     out.order = out.orderIndex;
     delete out.orderIndex;
@@ -80,7 +81,7 @@ async function sqlInsert(table: string, row: Record<string, unknown>) {
 
 // ===== INITIALIZATION =====
 
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
 
 export async function initializeDatabase(): Promise<void> {
   if (isWeb) {
@@ -142,6 +143,7 @@ export async function initializeDatabase(): Promise<void> {
       placeId TEXT NOT NULL,
       notes TEXT,
       photoUri TEXT,
+      checkIn INTEGER,
       createdAt INTEGER NOT NULL,
       updatedAt INTEGER NOT NULL,
       FOREIGN KEY(placeId) REFERENCES places(id) ON DELETE CASCADE
@@ -206,6 +208,7 @@ async function migrateNative(fromVersion: number) {
   const wanted: Record<string, string[]> = {
     places: ['coverImageUri TEXT', 'overallRatingManual REAL', 'ratingMode TEXT', 'notes TEXT'],
     lists: ['importedFrom TEXT', 'importedAt INTEGER', 'description TEXT', 'category TEXT', 'city TEXT'],
+    visits: ['checkIn INTEGER'],
     author: ['avatarUri TEXT', 'email TEXT'],
   };
   for (const [table, cols] of Object.entries(wanted)) {
@@ -408,6 +411,7 @@ async function hydratePlaces(places: Place[]): Promise<Place[]> {
   }
   const visitStats = new Map<string, { count: number; last: number }>();
   for (const v of visits) {
+    if (!isCheckIn(v)) continue; // dish-only entries aren't visits
     const st = visitStats.get(v.placeId) ?? { count: 0, last: 0 };
     visitStats.set(v.placeId, { count: st.count + 1, last: Math.max(st.last, v.createdAt) });
   }
@@ -646,9 +650,12 @@ export async function getListIdsForPlace(placeId: string): Promise<string[]> {
 
 // ===== VISITS =====
 
-export async function createVisit(placeId: string, notes?: string, photoUri?: string): Promise<Visit> {
+/** Whether a visit counts as a real check-in (see Visit.checkIn). */
+export const isCheckIn = (v: Pick<Visit, 'checkIn'>) => v.checkIn !== false;
+
+export async function createVisit(placeId: string, notes?: string, photoUri?: string, checkIn = true): Promise<Visit> {
   const now = Date.now();
-  const visit: Visit = { id: generateId(), placeId, notes, photoUri, createdAt: now, updatedAt: now };
+  const visit: Visit = { id: generateId(), placeId, notes, photoUri, checkIn, createdAt: now, updatedAt: now };
   if (isWeb) {
     await idb.putVisit(visit);
   } else {
@@ -666,7 +673,7 @@ export async function getVisitsForPlace(placeId: string): Promise<Visit[]> {
   return rows.map(r => fromRow<Visit>(r));
 }
 
-export async function updateVisit(visitId: string, updates: Partial<Pick<Visit, 'notes' | 'photoUri'>>): Promise<void> {
+export async function updateVisit(visitId: string, updates: Partial<Pick<Visit, 'notes' | 'photoUri' | 'checkIn'>>): Promise<void> {
   if (isWeb) {
     const visit = await idb.getVisit(visitId);
     if (!visit) throw new Error('Visit not found');
@@ -928,7 +935,7 @@ const COLUMNS = {
   places: ['id', 'name', 'address', 'latitude', 'longitude', 'categoryId', 'notes', 'overallRatingManual', 'ratingMode', 'coverImageUri', 'createdAt', 'updatedAt'],
   lists: ['id', 'name', 'description', 'category', 'city', 'importedFrom', 'importedAt', 'createdAt', 'updatedAt'],
   list_items: ['id', 'listId', 'placeId', 'order', 'createdAt'],
-  visits: ['id', 'placeId', 'notes', 'photoUri', 'createdAt', 'updatedAt'],
+  visits: ['id', 'placeId', 'notes', 'photoUri', 'checkIn', 'createdAt', 'updatedAt'],
   dishes: ['id', 'visitId', 'name', 'categoryId', 'rating', 'notes', 'photoUri', 'createdAt', 'updatedAt'],
   categories: ['id', 'name', 'type', 'parentId', 'order', 'createdAt'],
   tags: ['id', 'name', 'color', 'createdAt'],

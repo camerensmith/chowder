@@ -64,6 +64,12 @@ export interface ListItem {
 export interface Visit {
   id: string;
   placeId: string;
+  /**
+   * true = you tapped Check In. false = created behind the scenes to hold dishes
+   * logged without checking in (doesn't count as a visit). Undefined on visits
+   * from before this field existed; those count as check-ins.
+   */
+  checkIn?: boolean;
   notes?: string;
   photoUri?: string;
   apiId?: string;
