@@ -406,6 +406,11 @@ async function hydratePlaces(places: Place[]): Promise<Place[]> {
     if (!dishesByPlace.has(placeId)) dishesByPlace.set(placeId, []);
     dishesByPlace.get(placeId)!.push(dish);
   }
+  const visitStats = new Map<string, { count: number; last: number }>();
+  for (const v of visits) {
+    const st = visitStats.get(v.placeId) ?? { count: 0, last: 0 };
+    visitStats.set(v.placeId, { count: st.count + 1, last: Math.max(st.last, v.createdAt) });
+  }
   const tagsByPlace = new Map<string, string[]>();
   for (const pt of placeTags) {
     if (!tagsByPlace.has(pt.placeId)) tagsByPlace.set(pt.placeId, []);
@@ -415,6 +420,8 @@ async function hydratePlaces(places: Place[]): Promise<Place[]> {
     ...p,
     tagIds: tagsByPlace.get(p.id) ?? [],
     overallRating: getEffectiveRating(p, dishesByPlace.get(p.id) ?? []),
+    visitCount: visitStats.get(p.id)?.count ?? 0,
+    lastVisitedAt: visitStats.get(p.id)?.last || undefined,
   }));
 }
 
@@ -432,7 +439,7 @@ async function getRawPlace(placeId: string): Promise<Place | null> {
 
 /** Strip derived fields before persisting. */
 function storablePlace(place: Place): Place {
-  const { overallRating, tagIds, ...rest } = place;
+  const { overallRating, tagIds, visitCount, lastVisitedAt, ...rest } = place;
   return rest as Place;
 }
 

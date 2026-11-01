@@ -9,6 +9,7 @@ import {
   Alert,
   TextInput,
   Platform,
+  Switch,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -23,6 +24,7 @@ import { pickImage } from '../lib/imageStorage';
 import { applyUpdate, checkForUpdates } from '../lib/pwa';
 import { useUpdateState } from '../components/UpdateBanner';
 import CloudBackupSection from '../components/CloudBackupSection';
+import { getGoogleKey, getShowGoogleRatings, setGoogleKey, setShowGoogleRatings } from '../lib/googleRatings';
 import { getTileProviderPreference, getTileProvider } from '../lib/tileProviders';
 import { getRatingScalePreference, setRatingScalePreference, RatingScale } from '../lib/ratingScale';
 
@@ -33,6 +35,14 @@ export default function SettingsScreen() {
   const [author, setAuthor] = useState<Author | null>(null);
   const [nameDraft, setNameDraft] = useState('');
   const update = useUpdateState();
+  const [showGoogle, setShowGoogle] = useState(true);
+  const [hasGoogleKey, setHasGoogleKey] = useState(true);
+  const [googleKeyDraft, setGoogleKeyDraft] = useState('');
+
+  useEffect(() => {
+    getShowGoogleRatings().then(setShowGoogle);
+    getGoogleKey().then(k => setHasGoogleKey(!!k));
+  }, []);
   const [tileProviderName, setTileProviderName] = useState<string>('OpenStreetMap');
   const [ratingScale, setRatingScale] = useState<RatingScale>(5);
   const [friendLists, setFriendLists] = useState<List[]>([]);
@@ -235,6 +245,44 @@ export default function SettingsScreen() {
               <MaterialCommunityIcons name="chevron-right" size={20} color={theme.colors.textSecondary} />
             </View>
           </TouchableOpacity>
+
+          <View style={styles.settingItem}>
+            <View style={styles.versionRow}>
+              <View style={{ flex: 1, paddingRight: theme.spacing.md }}>
+                <Text style={styles.settingLabel}>Show Google ratings</Text>
+                <Text style={styles.settingHint}>A small footnote on places Google knows, e.g. “Google ★ 4.6 · 2,341 reviews”.</Text>
+              </View>
+              <Switch
+                value={showGoogle}
+                onValueChange={on => { setShowGoogle(on); setShowGoogleRatings(on); }}
+                trackColor={{ false: theme.colors.border, true: theme.colors.primary }}
+                accessibilityLabel="Show Google ratings"
+              />
+            </View>
+            {showGoogle && !hasGoogleKey ? (
+              <View style={{ marginTop: theme.spacing.sm, gap: 6 }}>
+                <Text style={styles.settingHint}>One-time setup: paste a Google Maps Platform API key (Places API).</Text>
+                <View style={{ flexDirection: 'row', gap: theme.spacing.sm }}>
+                  <TextInput
+                    style={[styles.nameInput, { flex: 1 }]}
+                    value={googleKeyDraft}
+                    onChangeText={setGoogleKeyDraft}
+                    placeholder="AIza…"
+                    placeholderTextColor={theme.colors.textSecondary}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                  />
+                  <TouchableOpacity
+                    onPress={async () => { if (!googleKeyDraft.trim()) return; await setGoogleKey(googleKeyDraft); setHasGoogleKey(true); }}
+                    style={{ justifyContent: 'center', paddingHorizontal: theme.spacing.sm }}
+                    accessibilityRole="button"
+                  >
+                    <Text style={{ color: theme.colors.primary, fontWeight: '600' }}>Save</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            ) : null}
+          </View>
 
 
         </View>

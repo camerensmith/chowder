@@ -25,6 +25,8 @@ export interface Place {
   coverImageUri?: string; // Cover image for the place
   cloudflareImageId?: string; // Cloudflare Images ID for CDN fallback
   tagIds?: string[]; // Array of tag IDs (not stored in DB, loaded separately)
+  visitCount?: number; // Derived in lib/db.ts
+  lastVisitedAt?: number; // Derived in lib/db.ts
   apiId?: string;
   synced?: boolean;
   lastSyncedAt?: number;
