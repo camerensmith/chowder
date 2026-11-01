@@ -155,3 +155,43 @@ export async function forgetGoogleMatch(placeId: string) {
   delete ids[placeId];
   await storage.setItem(IDS_KEY, JSON.stringify(ids));
 }
+
+/**
+ * Google text search near a point (only when a key is configured). Handles
+ * fuzzy dish/cuisine queries like "pho" very well. Requests only basic fields.
+ */
+export async function searchGoogleText(
+  query: string,
+  near: { latitude: number; longitude: number },
+  signal?: AbortSignal
+): Promise<import('./maps').PlaceSearchResult[]> {
+  const key = await getGoogleKey();
+  if (!key) return [];
+  const res = await fetch(`${API}/places:searchText`, {
+    method: 'POST',
+    signal,
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Goog-Api-Key': key,
+      'X-Goog-FieldMask': 'places.id,places.displayName,places.formattedAddress,places.shortFormattedAddress,places.location,places.primaryType',
+    },
+    body: JSON.stringify({
+      textQuery: query,
+      maxResultCount: 15,
+      locationBias: { circle: { center: { latitude: near.latitude, longitude: near.longitude }, radius: 3000 } },
+    }),
+  });
+  if (!res.ok) throw new Error(`Google search ${res.status}`);
+  const data = await res.json();
+  return (data.places ?? [])
+    .filter((p: any) => p.location && p.displayName?.text)
+    .map((p: any) => ({
+      id: `g-${p.id}`,
+      name: p.displayName.text,
+      address: p.shortFormattedAddress || p.formattedAddress,
+      latitude: p.location.latitude,
+      longitude: p.location.longitude,
+      kind: 'place' as const,
+      type: 'restaurant',
+    }));
+}

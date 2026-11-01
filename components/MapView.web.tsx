@@ -41,6 +41,9 @@ function injectPinStyles() {
     .chowder-pin.selected { z-index: 2; }
     .chowder-pin.selected img { transform: scale(1.35); }
     .chowder-pending { width: 28px; height: 36px; pointer-events: none; }
+    .chowder-result { width: 26px; height: 26px; border-radius: 13px; background: #fff; border: 2px solid #DC143C;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.3); cursor: pointer; display: flex; align-items: center; justify-content: center; }
+    .chowder-result::after { content: ''; width: 10px; height: 10px; border-radius: 5px; background: #DC143C; }
     .chowder-cluster { min-width: 34px; height: 34px; padding: 0 8px; box-sizing: border-box; border-radius: 17px;
       background: #DC143C; color: #fff; font: 600 14px/30px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
       text-align: center; border: 2px solid #fff; box-shadow: 0 1px 4px rgba(0,0,0,0.3); cursor: pointer; }
@@ -72,12 +75,13 @@ function makePendingElement(): HTMLDivElement {
 }
 
 export default function MapView(props: MapViewProps) {
-  const { places, selectedPlaceId, pendingPin, center, zoom } = props;
+  const { places, selectedPlaceId, pendingPin, center, zoom, resultPins } = props;
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
   const markersRef = useRef(new Map<string, { marker: maplibregl.Marker; place: Place }>());
   const pendingMarkerRef = useRef<maplibregl.Marker | null>(null);
   const clusterMarkersRef = useRef<maplibregl.Marker[]>([]);
+  const resultMarkersRef = useRef<maplibregl.Marker[]>([]);
   const reclusterRef = useRef<() => void>(() => {});
   const hasFitRef = useRef(false);
   const ignoreMapClickUntil = useRef(0);
@@ -196,6 +200,7 @@ export default function MapView(props: MapViewProps) {
       resizeObserver.disconnect();
       markersRef.current.clear();
       clusterMarkersRef.current = [];
+      resultMarkersRef.current = [];
       reclusterRef.current = () => {};
       pendingMarkerRef.current = null;
       map.remove();
@@ -278,6 +283,32 @@ export default function MapView(props: MapViewProps) {
         .addTo(map);
     }
   }, [pendingPin]);
+
+  // Search-result pins ("Show all on map").
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    resultMarkersRef.current.forEach(m => m.remove());
+    resultMarkersRef.current = [];
+    if (!resultPins?.length) return;
+    const bounds = new maplibregl.LngLatBounds();
+    for (const r of resultPins) {
+      const el = document.createElement('div');
+      el.className = 'chowder-result';
+      el.title = r.name;
+      el.setAttribute('role', 'button');
+      el.setAttribute('aria-label', r.name);
+      el.addEventListener('click', ev => {
+        ev.stopPropagation();
+        ignoreMapClickUntil.current = Date.now() + 400;
+        propsRef.current.onResultPress?.(r.id);
+      });
+      resultMarkersRef.current.push(new maplibregl.Marker({ element: el }).setLngLat([r.longitude, r.latitude]).addTo(map));
+      bounds.extend([r.longitude, r.latitude]);
+    }
+    hasFitRef.current = true;
+    map.fitBounds(bounds, { padding: { top: 80, bottom: 140, left: 50, right: 50 }, maxZoom: 16, duration: 500 });
+  }, [resultPins]);
 
   // One-shot recenter requests.
   useEffect(() => {

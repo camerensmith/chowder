@@ -24,6 +24,8 @@ export default function MapView({
   zoom,
   onCenterConsumed,
   onViewChange,
+  resultPins,
+  onResultPress,
 }: MapViewProps) {
   const mapRef = useRef<RNMapView>(null);
   const hasFitRef = useRef(!!initialCenter);
@@ -47,6 +49,15 @@ export default function MapView({
       { edgePadding: { top: 80, right: 60, bottom: 160, left: 60 }, animated: false }
     );
   }, [places, center]);
+
+  useEffect(() => {
+    if (!resultPins?.length) return;
+    hasFitRef.current = true;
+    mapRef.current?.fitToCoordinates(
+      resultPins.map(r => ({ latitude: r.latitude, longitude: r.longitude })),
+      { edgePadding: { top: 80, right: 60, bottom: 160, left: 60 }, animated: true }
+    );
+  }, [resultPins]);
 
   useEffect(() => {
     if (!center) return;
@@ -86,6 +97,18 @@ export default function MapView({
             onPress={e => {
               e.stopPropagation?.();
               onPlaceSelect?.(place);
+            }}
+          />
+        ))}
+        {(resultPins ?? []).map(r => (
+          <Marker
+            key={`result-${r.id}`}
+            coordinate={{ latitude: r.latitude, longitude: r.longitude }}
+            pinColor="wheat"
+            title={r.name}
+            onPress={e => {
+              e.stopPropagation?.();
+              onResultPress?.(r.id);
             }}
           />
         ))}
