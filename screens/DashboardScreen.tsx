@@ -15,7 +15,7 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../types';
 import Svg, { Circle } from 'react-native-svg';
 import { theme } from '../lib/theme';
-import { getAllPlaces, getAllVisits, getAllLists, getAllDishes, getAllListItems } from '../lib/db';
+import { getAllPlaces, getAllVisits, getAllLists, getAllDishes, getAllListItems, isCheckIn } from '../lib/db';
 import { Place, Visit, List, Dish, ListItem } from '../types';
 import { getRatingScalePreference, toDisplayRating, RatingScale } from '../lib/ratingScale';
 
@@ -131,7 +131,7 @@ export default function DashboardScreen() {
 
   const cutoff = getTimeRangeCutoff();
   const restaurantsAdded = places.filter(p => p.createdAt >= cutoff).length;
-  const checkIns = visits.filter(v => v.createdAt >= cutoff).length;
+  const checkIns = visits.filter(v => isCheckIn(v) && v.createdAt >= cutoff).length;
 
   const timeFilteredDishes = dishes.filter(d => d.createdAt >= cutoff);
   const { sum, count } = timeFilteredDishes.reduce(
@@ -142,7 +142,7 @@ export default function DashboardScreen() {
   const avgScoreDisplay = count > 0 ? toDisplayRating(avgScore, ratingScale).toFixed(1) : '—';
 
   const listsCreated = lists.filter(l => !l.importedFrom).length;
-  const totalCheckIns = visits.length;
+  const totalCheckIns = visits.filter(isCheckIn).length;
 
   const dishCounts = new Map<string, { count: number; lastDate: number }>();
   dishes.forEach(d => {
@@ -286,7 +286,7 @@ export default function DashboardScreen() {
   };
 
   const renderDetailView = () => {
-    const recentVisits = [...visits]
+    const recentVisits = visits.filter(isCheckIn)
       .sort((a, b) => b.createdAt - a.createdAt)
       .slice(0, 10)
       .map(visit => ({
