@@ -17,7 +17,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { theme } from '../lib/theme';
 import { searchNearby, PlaceSearchResult } from '../lib/maps';
-import { searchSaved, searchByCuisine, foodTerm, isFoodResult, fold, distanceSq, SavedSearchContext } from '../lib/foodSearch';
+import { searchSaved, searchByCuisine, foodTerm, isFoodResult, matchesFoodWord, fold, distanceSq, SavedSearchContext } from '../lib/foodSearch';
 import { searchGoogleText } from '../lib/googleRatings';
 import { getAllCategories, getAllDishes, getAllVisits, getAllTags } from '../lib/db';
 import { Place } from '../types';
@@ -136,7 +136,7 @@ export default function PlaceSearchModal({ visible, onClose, onSelect, onSelectS
     // Name search + Google: start after a short pause in typing.
     timers.push(setTimeout(() => {
       withTimeout(signal => searchNearby(q, where, signal), 8000, controller?.signal)
-        .then(r => { if (current()) setBySource(s => ({ ...s, photon: food ? r.filter(isFoodResult) : r })); })
+        .then(r => { if (current()) setBySource(s => ({ ...s, photon: food ? r.filter(x => isFoodResult(x) && matchesFoodWord(x, q)) : r })); })
         .catch(e => { if (e?.name !== 'AbortError') failed(); })
         .finally(() => { if (current()) setIsLoading(false); });
       if (where) {

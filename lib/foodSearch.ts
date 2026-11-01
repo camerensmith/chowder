@@ -292,6 +292,17 @@ export function isFoodResult(r: PlaceSearchResult): boolean {
   return r.kind === 'place' && !!r.type && FOOD_TYPES.has(r.type);
 }
 
+/**
+ * For food queries, name-search results must contain the query (or one of the
+ * food word's name variants) as a whole word: "pho" keeps "Pho Rainbow" but
+ * drops "Phoenix Bar".
+ */
+export function matchesFoodWord(r: PlaceSearchResult, query: string): boolean {
+  const name = ` ${fold(r.name)} `;
+  const words = [fold(query), ...(foodTerm(query)?.names ?? []).map(fold)].filter(Boolean);
+  return words.some(w => name.includes(` ${w} `) || name.includes(` ${w}s `));
+}
+
 export function distanceSq(a: { latitude: number; longitude: number }, b: { latitude: number; longitude: number }) {
   const k = Math.cos((a.latitude * Math.PI) / 180);
   return (a.latitude - b.latitude) ** 2 + ((a.longitude - b.longitude) * k) ** 2;
