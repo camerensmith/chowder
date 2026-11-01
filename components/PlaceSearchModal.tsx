@@ -36,6 +36,24 @@ interface PlaceSearchModalProps {
   onShowAll?: (query: string, results: PlaceSearchResult[]) => void;
 }
 
+/** Run a request with its own time limit (also cancelled if the search changes). */
+function withTimeout<T>(run: (signal?: AbortSignal) => Promise<T>, ms: number, parent?: AbortSignal): Promise<T> {
+  if (typeof AbortController === 'undefined') return run();
+  const c = new AbortController();
+  const onAbort = () => c.abort();
+  parent?.addEventListener('abort', onAbort);
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      c.abort();
+      reject(new Error('timeout')); // not an AbortError: counts as a failed source
+    }, ms);
+    run(c.signal).then(resolve, reject).finally(() => {
+      clearTimeout(timer);
+      parent?.removeEventListener('abort', onAbort);
+    });
+  });
+}
+
 type Row = { type: 'saved'; place: Place; reason?: string } | { type: 'web'; result: PlaceSearchResult };
 
 function iconForType(type?: string): any {
@@ -52,8 +70,10 @@ function iconForType(type?: string): any {
 
 export default function PlaceSearchModal({ visible, onClose, onSelect, onSelectSaved, savedPlaces, near, onShowAll }: PlaceSearchModalProps) {
   const [query, setQuery] = useState('');
-  const [webResults, setWebResults] = useState<PlaceSearchResult[]>([]);
-  const [isLoading, setIsLoading] = useState(false);
+  // Each source fills in independently, so a slow one never blocks the others.
+  const [bySource, setBySource] = useState<{ photon: PlaceSearchResult[]; cuisine: PlaceSearchResult[]; google: PlaceSearchResult[] }>({ photon: [], cuisine: [], google: [] });
+  const [isLoading, setIsLoading] = useState(false); // primary (name) search in flight
+  const [cuisinePending, setCuisinePending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const requestRef = useRef(0);
   const nearRef = useRef(near);
@@ -82,7 +102,7 @@ export default function PlaceSearchModal({ visible, onClose, onSelect, onSelectS
       }).catch(() => setCtx(null));
     } else {
       setQuery('');
-      setWebResults([]);
+      setBySource({ photon: [], cuisine: [], google: [] });
       setError(null);
     }
   }, [visible]);
@@ -90,53 +110,68 @@ export default function PlaceSearchModal({ visible, onClose, onSelect, onSelectS
   useEffect(() => {
     const q = query.trim();
     if (q.length < 2) {
-      setWebResults([]);
+      setBySource({ photon: [], cuisine: [], google: [] });
       setIsLoading(false);
+      setCuisinePending(false);
+      setError(null);
       return;
     }
     const id = ++requestRef.current;
+    const current = () => id === requestRef.current;
     const controller = typeof AbortController !== 'undefined' ? new AbortController() : undefined;
+    const where = nearRef.current;
+    const food = !!foodTerm(q) && !!where;
+    setBySource({ photon: [], cuisine: [], google: [] });
     setIsLoading(true);
-    const timer = setTimeout(async () => {
-      try {
-        const where = nearRef.current;
-        const food = !!foodTerm(q);
-        // Ask every source at once; any of them failing is fine.
-        const settled = await Promise.allSettled([
-          searchNearby(q, where, controller?.signal),
-          food && where ? searchByCuisine(q, where, controller?.signal) : Promise.resolve([]),
-          where ? searchGoogleText(q, where, controller?.signal) : Promise.resolve([]),
-        ]);
-        if (id !== requestRef.current) return;
-        const [photon, cuisine, google] = settled.map(r => (r.status === 'fulfilled' ? r.value : []));
-        if (settled.every(r => r.status === 'rejected')) throw settled[0].status === 'rejected' ? settled[0].reason : new Error('search failed');
-        // For food words, drop non-food name matches ("Phoenix", "Phone Store").
-        const named = food ? photon.filter(isFoodResult) : photon;
-        const merged: PlaceSearchResult[] = [];
-        for (const r of [...google, ...cuisine, ...named]) {
-          const dupe = merged.some(m => fold(m.name) === fold(r.name) && Math.abs(m.latitude - r.latitude) < 0.001 && Math.abs(m.longitude - r.longitude) < 0.001);
-          if (!dupe) merged.push(r);
-        }
-        if (where) {
-          const places = merged.filter(r => r.kind === 'place').sort((a, b) => distanceSq(a, where) - distanceSq(b, where));
-          setWebResults([...places, ...merged.filter(r => r.kind === 'area')].slice(0, 40));
-        } else {
-          setWebResults(merged.slice(0, 40));
-        }
-        setError(null);
-      } catch (e: any) {
-        if (id === requestRef.current && e?.name !== 'AbortError') {
-          setError('Couldn’t search right now. Check your connection.');
-        }
-      } finally {
-        if (id === requestRef.current) setIsLoading(false);
+    setCuisinePending(food);
+    setError(null);
+    let failures = 0;
+    const sources = 2 + (food ? 1 : 0);
+    const failed = () => {
+      failures++;
+      if (failures >= sources && current()) setError('Couldn’t search right now. Check your connection.');
+    };
+
+    const timers: ReturnType<typeof setTimeout>[] = [];
+    // Name search + Google: start after a short pause in typing.
+    timers.push(setTimeout(() => {
+      withTimeout(signal => searchNearby(q, where, signal), 8000, controller?.signal)
+        .then(r => { if (current()) setBySource(s => ({ ...s, photon: food ? r.filter(isFoodResult) : r })); })
+        .catch(e => { if (e?.name !== 'AbortError') failed(); })
+        .finally(() => { if (current()) setIsLoading(false); });
+      if (where) {
+        withTimeout(signal => searchGoogleText(q, where, signal), 8000, controller?.signal)
+          .then(r => { if (current()) setBySource(s => ({ ...s, google: r })); })
+          .catch(e => { if (e?.name !== 'AbortError') failed(); });
       }
-    }, 300);
+    }, 300));
+    // Cuisine search (OpenStreetMap) is slower: wait until typing has settled, cap the wait.
+    if (food) {
+      timers.push(setTimeout(() => {
+        withTimeout(signal => searchByCuisine(q, where!, signal), 12000, controller?.signal)
+          .then(r => { if (current()) setBySource(s => ({ ...s, cuisine: r })); })
+          .catch(e => { if (e?.name !== 'AbortError') failed(); })
+          .finally(() => { if (current()) setCuisinePending(false); });
+      }, 700));
+    }
     return () => {
-      clearTimeout(timer);
+      timers.forEach(clearTimeout);
       controller?.abort();
     };
   }, [query]);
+
+  // Merge sources: Google first (best names), then OSM cuisine, then name search; nearest first.
+  const webResults = useMemo(() => {
+    const where = nearRef.current;
+    const merged: PlaceSearchResult[] = [];
+    for (const r of [...bySource.google, ...bySource.cuisine, ...bySource.photon]) {
+      const dupe = merged.some(m => fold(m.name) === fold(r.name) && Math.abs(m.latitude - r.latitude) < 0.001 && Math.abs(m.longitude - r.longitude) < 0.001);
+      if (!dupe) merged.push(r);
+    }
+    if (!where) return merged.slice(0, 40);
+    const places = merged.filter(r => r.kind === 'place').sort((a, b) => distanceSq(a, where) - distanceSq(b, where));
+    return [...places, ...merged.filter(r => r.kind === 'area')].slice(0, 40);
+  }, [bySource]);
 
   const savedMatches = useMemo(() => {
     if (!query.trim()) return [];
@@ -197,7 +232,8 @@ export default function PlaceSearchModal({ visible, onClose, onSelect, onSelectS
   const q = query.trim();
   let empty: string | null = null;
   if (!q) empty = 'Search your saved places, or find a new restaurant to add.\n\nTip: you can also tap anywhere on the map to drop a pin.';
-  else if (q.length >= 2 && !isLoading && sections.length === 0) empty = error ?? `No places found for “${q}”.`;
+  else if (q.length >= 2 && !isLoading && !cuisinePending && sections.length === 0) empty = error ?? `No places found for “${q}”.`;
+  else if (q.length >= 2 && sections.length === 0) empty = 'Searching…';
 
   return (
     <Modal visible={visible} animationType="slide" transparent={false} onRequestClose={onClose}>
@@ -254,6 +290,12 @@ export default function PlaceSearchModal({ visible, onClose, onSelect, onSelectS
             )}
             keyboardShouldPersistTaps="handled"
             stickySectionHeadersEnabled={false}
+            ListFooterComponent={cuisinePending ? (
+              <View style={styles.moreRow}>
+                <ActivityIndicator size="small" color={theme.colors.textSecondary} />
+                <Text style={styles.moreText}>Looking for more nearby…</Text>
+              </View>
+            ) : null}
           />
         )}
       </SafeAreaView>
@@ -298,6 +340,17 @@ const styles = StyleSheet.create({
   cancelText: {
     ...theme.typography.body,
     color: theme.colors.primary,
+  },
+  moreRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: theme.spacing.sm,
+    paddingHorizontal: theme.spacing.lg,
+    paddingVertical: theme.spacing.md,
+  },
+  moreText: {
+    ...theme.typography.bodySmall,
+    color: theme.colors.textSecondary,
   },
   sectionHeaderRow: {
     flexDirection: 'row',
